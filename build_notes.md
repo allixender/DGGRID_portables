@@ -147,15 +147,30 @@ test dir `karula:/home/akmoch/dev/build/DGGRID_portable_tests` (DGGRID src copy,
 
 - podman on fedora runs ubuntu images fine -> "ubuntu thing" = `podman run docker.io/library/ubuntu:24.04 ...`, also ok for running the GH workflow locally with `act` (podman socket) if ever needed
 
+## 2026-10-02 repo + CI (github.com/allixender/DGGRID_portables, public, AGPL-3.0)
+
+- scope decision: base dggrid binaries first, geoarrow/lib prototype stays in `prototype/` (review later, once CI/CD runs)
+- root `build.zig`: dggrid exe only, sorted non-recursive globs over `DGGRID/src`, `-Dubsan`, `-Dstrip`, `zig build release` -> `zig-out/release/<platform>/dggrid[.exe]`, ReleaseFast + strip, no pdb
+- release matrix: linux-x86_64 / linux-arm64 (musl static), macos-x86_64 / macos-arm64 (11.0), windows-x86_64 / windows-arm64 (gnu/MinGW). gnu.2.17 dropped (musl faster + runs everywhere)
+- `zig build release` mac M-series: 2:02 for 6 targets, binaries 1.6-1.9 MB
+- reproducibility: mac host vs karula, sorted globs + strip -> all 6 release binaries byte-identical (sha256) -> fixed
+- `ci/run_examples.sh <exe> <workdir>`: examplesNoGDAL, fails on rc!=0 or missing output file vs sampleOutput listing, md table to step summary. `nullglob` needed: dymaxionIcosa has no sampleOutput dir at all -> rc check only
+- `ci/compare_outputs.py <workdir> [ref]`: numeric compare, informational only (sampleOutput not a valid oracle, see karula section)
+- `.github/workflows/build.yml`:
+  - build (ubuntu-24.04): `zig build release`, llvm-lipo -> macos-universal, package `dggrid-<platform>.tar.gz|zip` (dir `dggrid-<ver>-<platform>/` with dggrid, LICENSE, BUILDINFO.txt), SHA256SUMS
+  - asset names without version -> stable URLs `releases/download/edge/dggrid-linux-x86_64.tar.gz`
+  - ubsan (ubuntu): ReleaseSafe + `-Dubsan=true`, all examples
+  - test matrix on native runners from the packaged archives: ubuntu-24.04, ubuntu-24.04-arm, macos-15 (arm64 + universal), macos-15-intel (x86_64 + universal), windows-2025, windows-11-arm. windows: `core.autocrlf false` before checkout (CRLF .meta files otherwise)
+  - publish: push main -> rolling `edge` pre-release (delete + recreate), tag `v*` -> release, `-` in tag -> pre-release
+- `.github/workflows/watchdog.yml`: daily 05:17 UTC + manual, `git ls-remote` sahrk master vs pinned submodule -> branch `watchdog/dggrid-<sha10>` + PR with upstream commit list -> `gh workflow run build.yml --ref <branch>` (GITHUB_TOKEN PRs don't trigger workflows). needs repo setting "Allow GitHub Actions to create and approve pull requests"
+- action versions pinned to majors as of 2026-10: checkout@v7, upload-artifact@v7, download-artifact@v8, setup-zig@v2
+- windows deep testing: separate, claude agent on a windows host with this file as context
+
 ## open / next
 
-- build.zig + CI in this repo (option 1: submodule wrapper, glob build, build once on linux, test on native runners, tolerance diff, release on tag)
-- linux artefact = x86_64-linux-musl static; gnu.2.17 optional / drop?
-- regression oracle = native gcc linux output, not sampleOutput
-- sort globs + strip -> recheck cross-host reproducibility
-- scheduled job -> PR when sahrk master moves
+- regression oracle = native gcc linux output, not sampleOutput (step 4, not in CI yet)
 - macos gatekeeper / notarisation (cf. CODESIGNING.md in fork)
-- universal macos binary (lipo / llvm-lipo)?
-- windows binaries still never executed -> windows-latest / windows-11-arm runner test
+- universal macos binary: in build.yml via llvm-lipo, verify on runners
+- windows binaries: first execution in CI test matrix, deeper tests via agent on windows host
 - upstream: MSVC fixes (`::DgDiscTopoRF`, DgRF.hpp:308), precision typedef for long double (perf everywhere + aarch64-linux)
 - geoarrow: C API / writer on top of libdglib + libgeoarrow
