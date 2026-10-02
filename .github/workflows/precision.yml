@@ -94,8 +94,8 @@ jobs:
             .venv/bin/python ci/precision/ldmath_compare.py "$f" > "${f%.txt}.cmp"
             { echo "### $(basename "$f")"; echo '```'; sed -n '/^# worst/,$p' "${f%.txt}.cmp"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           done
-          mac=$(ls res/macos-15--*aarch64* | head -1)
-          win=$(ls res/windows-11-arm--ldmath-aarch64* | head -1)
+          mac=$(ls res/macos-15--*aarch64*.txt | head -1)  # .txt only, the loop above wrote .cmp next to them
+          win=$(ls res/windows-11-arm--ldmath-aarch64*.txt | head -1)
           .venv/bin/python ci/precision/ldmath_compare.py "$win" "$mac" > res/win-arm64-vs-mac-arm64.cmp
           { echo "### win-arm64 vs mac-arm64, rows differing"; echo '```'; awk '$NF != "0" && /ulp_diff/' res/win-arm64-vs-mac-arm64.cmp | sort -k11 -g -r | head -60; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
