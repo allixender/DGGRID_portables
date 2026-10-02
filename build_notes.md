@@ -199,11 +199,48 @@ test dir `karula:/home/akmoch/dev/build/DGGRID_portable_tests` (DGGRID src copy,
 - watchdog manual run: pinned == upstream 688940b -> "up to date". PR-creation path untested until sahrk master moves
 - build.yml: `paths-ignore` `**.md` + `prototype/**` -> notes-only pushes don't rebuild/republish edge (tags still always build)
 
+## 2026-10-02 windows host session (Win10 x64, zig 0.16.0 x86_64-windows)
+
+host: no gcc/clang/MSYS toolchain, no arm64 execution (Win10 x64, no emulation) -> arm64 only statically + via CI. WSL Ubuntu used to run the linux-x86_64 musl build as exact oracle. checkout gotcha: global `core.autocrlf=true` here -> repo scripts CRLF in the worktree, `bash ci/run_examples.sh` under WSL fails (`syntax error near '}'`), git-bash fine. submodules were not initialised on this clone (`git submodule update --init`)
+
+### windows-x86_64 `ostream << long double`: root cause + workaround (DONE)
+
+- minimal repro (zig c++ -target x86_64-windows-gnu): `cout << 6371007.18L` -> `2.11863e-312`, also `std::fixed`, `ostringstream`, `std::to_string(long double)`. with AND without `-D__USE_MINGW_ANSI_STDIO=1` (that only fixes our own `snprintf("%Lf")`). `istream >> long double` fine
+- path: `num_put<char>::do_put(long double)` -> `__do_put_floating_point(..., "L")` -> `__locale::__snprintf` (libcxx/src/support/win32/locale_win32.cpp) -> on MinGW (`_LIBCPP_MSVCRT` only for real MSVC) `std::vsnprintf` -> compiled by zig WITHOUT `__USE_MINGW_ANSI_STDIO` -> UCRT `__stdio_common_vsprintf`, reads 80-bit `%Lg` arg as 64-bit double
+- llvm-mingw 20260922 (clang 23.1.2, ucrt-x86_64): same test prints correctly, w/ and w/o the define. its `build-libcxx.sh` adds `-D__USE_MINGW_ANSI_STDIO=1` for i686/x86_64 ("Force using the mingw stdio functions, for correct long double printing"), `nm libc++.a` -> locale_win32.obj imports `__mingw_vsnprintf`, string.obj `__mingw_snprintf`
+- -> zig bug: `src/libs/libcxx.zig` (zig master as of today too) adds no such flag. fix for zig = one line in the libcxx cflags loop: `if (target.isMinGW() and target.cpu.arch.isX86()) try cflags.append("-D__USE_MINGW_ANSI_STDIO=1");`. no existing issue found (quick search) -> TODO report on codeberg ziglang/zig with the repro above
+- workaround here: `src/mingw_ldouble_numput.cpp`, only linked for windows x86_64 (build.zig). static init installs a `num_put<char>` facet as global locale + imbues cout/cerr/clog; long double overload formats via `__mingw_snprintf`, same conversion selection / fill / width / adjustfield / decimal point as libc++. every stream DGGRID creates afterwards inherits it (DGGRID never touches locales)
+- conformance: 13 values (incl. ±0, 1e-312, 1e4000L, LDBL_MAX) x 4 floatfields x 5 flag sets x 4 adjustfields x 5 precisions x 2 widths = 10402 lines, zig+shim vs llvm-mingw byte-identical (first attempt had 175 diffs: libc++ internal-pads after a sign, else after `0x`)
+- not covered: `std::to_string(long double)` (libc++ calls snprintf directly, no facet). DGGRID's `dgg::util::to_string` uses ostringstream -> covered
+- dggrid.exe (ReleaseFast, native windows-2025-like host): 32/32 examples rc=0, `.prj` `6371007.180918475000` (= x86 sampleOutput), param echo `dggs_vert0_lon 11.25`, no `e-31x` left anywhere
+- vs linux-x86_64 musl (same commit, run in WSL): all text outputs identical (modulo CRLF, see GeoJSON below). superfundGrid .shp: 18 doubles differ by exactly 1 ulp (lat only, e.g. `42.6060412921882` vs `42.606041292188195`) -> mingw x87 libm vs musl, harmless, not printing
+
+### windows-arm64 precision: libm provenance (static analysis, run pending)
+
+- probe `ci/precision/ldmath.cpp`: sinl/cosl/tanl/atanl/sqrtl/asinl/acosl/atan2l/powl on ~40 fixed + 300 xorshift inputs each (incl. acos/asin in [1-1e-6, 1], snyderInv territory), inputs exact doubles widened to long double, printed `(double)` at %.17g + %a. `ci/precision/ldmath_compare.py out.txt [other.txt]` -> ulp error vs mpmath correctly rounded double, + ulp diff vs a second platform
+- first version used `0.1L`-style literals -> on x87 the input != printed double -> bogus "1.0 rel error" near zeros of sin. fixed: double inputs only
+- PE imports of the aarch64-windows-gnu probe (pefile): `api-ms-win-crt-math`: `acos asin atan atan2 pow` -> on arm64 mingw these `*l` are aliases to UCRT double functions (`F_LD64(acosl == acos)` in mingw def-include/crt-aliases.def.in). `sinl cosl tanl sqrtl` NOT imported -> zig compiler_rt (`sinl` -> musl `sin` when long double is 64-bit). strtold = mingw gdtoa `__mingw_strtod` (correct)
+- x86_64-windows-gnu probe locally: all functions <= 1 ulp except `acosl` near 1 (2e5 ulp at x=1-1e-10, i.e. ~7e-16 rad absolute) -> mingw x87 `acosl = atanl(sqrtl(1-x^2)/x)` cancellation, harmless. `sscanf %Lf` = 0 without the ANSI define (expected, build.zig sets it)
+- release dggrid.exe imports from api-ms-win-crt-math: arm64 `acos asin atan atan2 pow llrintl lround`, x86_64 only `acos asin atan2 lround` (DGGRID's few plain-double calls; the 15 acosl / 11 asinl / 13 atan2l / 9 atanl uses are mingw x87 code there, UCRT on arm64)
+- -> suspects for win-arm64: Microsoft's arm64 UCRT `acos/asin/atan2/pow` (the only functions that differ in provenance from linux/mac). 6e-5 deg ~ 1e-6 rad is far beyond any 1-ulp libm noise (mac vs linux differences are ~1e-14), would need float-ish precision in one of them
+- `.github/workflows/precision.yml` (manual or push to `probe/**`, never publishes): cross-builds the probe on ubuntu, runs on windows-11-arm (+ MSVC `cl` arm64 build as UCRT cross-check), windows-2025 (with/without ANSI define), macos-15, macos-15-intel, ubuntu x86_64/arm64, compares vs mpmath + win-arm64 vs mac-arm64 in the step summary. NOT run yet
+- if UCRT confirmed: workaround = link own acos/asin/atan2/pow for aarch64-windows (e.g. compile musl/compiler_rt versions under the `*l` names or `-Wl,--defsym`), keeps UCRT for the rest
+
+### upstream fix: binary-mode output streams (DONE locally, patch ready)
+
+- `upstream/0001-Write-output-files-in-binary-mode-fixes-invalid-GeoJ.patch` (git format-patch against 688940b, applies clean; local commit 58e4ae5 on branch `fix/binary-output-streams` in the DGGRID submodule clone only, submodule pin unchanged)
+- not only `DgOutputStream.cpp:65`: text-mode writers were also `DgOutShapefile.cpp:110` (.prj), `SubOpOut.cpp:959` (TEXT data output: transform / binvals / binpres), `SubOpBasicMulti.cpp:207` (multi-grid meta file). all 4 -> `std::ios::out | std::ios::binary`. input streams untouched (text mode keeps accepting CRLF .meta on windows)
+- before (windows-x86_64): both gridgenGeoJSON files end `}},]}\r\n` -> `json.load` fails, all 83 text outputs CRLF
+- after: both GeoJSON parse (49 features each), every DGGRID output LF, 63 of 66 example output files byte-identical to linux-x86_64 (rest = the 3 superfundGrid .shp 1-ulp diffs above)
+- side note for the PR, not fixed: `postamble()` with zero features would seek back over `:[` -> also invalid, any platform
+- open: PR to sahrk/DGGRID needs a fork push (no gh on this host); bundle with the MSVC fixes or send alone (small, self-contained -> alone is easier to review)
+
 ## open / next
 
-- windows-x86_64: libc++ `ostream << long double` (prj radius, logs, stats?) -> investigate / workaround
-- windows-arm64: 1e-5 deg precision vs macos-arm64, cell selection differs in clip examples -> windows-host agent
-- upstream PR: binary-mode output streams (GeoJSON comma + CRLF), MSVC template fixes
+- windows-x86_64: report libc++ ANSI_STDIO bug to zig; drop `src/mingw_ldouble_numput.cpp` once fixed upstream. edge release notes: x86_64 known issue resolved after next main push
+- windows-arm64: run `precision.yml` (push `probe/ldmath` or workflow_dispatch) -> confirm UCRT acos/asin/atan2/pow, then workaround
+- upstream PR: binary-mode patch ready in `upstream/`; MSVC template fixes still open
+- windows GeoJSON in our releases stays broken until upstream merges (or we apply `upstream/*.patch` at build time)
 - CI value regression: compare against linux-x86_64 output per run (x86_64 platforms should be identical), fail on int/text diffs
 
 - regression oracle = native gcc linux output, not sampleOutput (step 4, not in CI yet)
