@@ -1,13 +1,30 @@
 # dglib -> wasm32-wasi (zig 0.16), notes
 
-2026-10-02, M2 Pro, node v20.11.1 (`node:wasi`, preview1). build + bench live in `../lib/` (`zig build -Dtarget=wasm32-wasi [-Ddgreal=double]`), runner here: `node run.mjs bench.wasm 200000`
+2026-10-02, M2 Pro, node v20.11.1. build in `../lib/`: `zig build -Dtarget=wasm32-wasi -Ddgreal=double -Doptimize=ReleaseFast -p zig-out/wasm`
+
+- `dggrid.wasm` -> the IGEO7 C API as a reactor module (no main, `_initialize` runs the C++ static ctors), exports exactly `dg_*` + memory. `dggrid.mjs` = JS wrapper, `node test.mjs <dggrid.wasm> [check_cli workdir]` = test + bench
+- `bench.wasm` -> WASI command (geo -> Q2DI loop), `node run.mjs bench.wasm 200000`
+
+## dggrid.wasm + dggrid.mjs (JS API)
+
+- imports only 8 WASI functions (environ_*, fd_write/read/seek/close, fd_fdstat_get, proc_exit) -> dggrid.mjs stubs them itself, fd_write -> console, proc_exit (= DGGRID fatal) -> JS Error. no WASI runtime / shim lib needed, same code node + browser (`Igeo7.load(fetch(...))` via instantiateStreaming)
+- API: `geoToZ7(res, lon, lat)` -> BigUint64Array, `z7ToCentroid(ids)`, `z7ToBoundary(ids)` / `z7ToBoundaryRaw`, `z7ToString`, `z7FromString`, `z7Res`. buffers via dg_alloc/dg_free, typed array views recreated after each call (memory growth detaches them)
+- size: 727 KB stripped ReleaseFast (187 KB gzip), 593 KB ReleaseSmall, unstripped 12.6 MB
+- test.mjs vs CLI (check_cli.py workdir): res 20 ids 3005/3005 identical, whole earth res 3 (3432 cells, 12 pentagons) centroids/boundaries within 6e-12 deg (native 5e-13, wasm libm rounding)
+- invalid input (lat 91, res 21, bad id, bad string) -> JS exceptions with the dg_last_error message, instance stays usable
+
+| 200k pts res 9 | wasm (node 20) | native (ctypes) |
+|---|---|---|
+| geo -> Z7 | 200k pts/s | 386k pts/s |
+| Z7 -> centroid | ~545k/s | 855k/s |
+| Z7 -> boundary | ~160k/s | 201k/s |
 
 ## builds?
 
 - yes. dglib + proj4lib + shapelib compile for wasm32-wasi, except the 19 file reader/writer classes (`DgIn*`, `DgOut*`, `DgInputStream`, `DgOutputStream`): zig's wasi libc++ has no `<fstream>` -> `../lib/build.zig` skips `DgIn*`/`DgOut*` on wasm, a lib doesn't need them (no file IO is the point anyway)
 - link: only `__cxa_allocate_exception` + `__cxa_throw` missing, zig's wasm libc++abi has no exception support -> `../lib/wasi_cxa_stub.cpp`, any throw = abort = trap. no catchable errors on wasm -> validate inputs in the C API, fatal hook (0101) can only abort there
 - results identical to native: 200k random pts geo -> Q2DI res 9, same hash as mac arm64/x86_64 (needs patch 0102 for dgreal=double, see below)
-- bench.wasm 12.6 MB unstripped (ReleaseFast, debug info incl), libdglib.a 23 MB. not stripped / wasm-opt'd yet
+- bench.wasm 12.6 MB unstripped (ReleaseFast, debug info incl), libdglib.a 23 MB. dggrid.wasm is stripped (727 KB, see above)
 
 ## long double = 128-bit soft float on wasm32
 
@@ -34,6 +51,7 @@
 
 ## open
 
-- process exit crash: `RuntimeError: null function or function signature mismatch` in `__funcs_on_exit` <- `__wasm_call_dtors` <- `_start`, after main returned. only once an IDGGS was built (`DgRFNetwork` + `DgGeoSphRF` alone exit clean, plain static std::string + atexit test programs too). no dglib atexit calls, no linker warnings. command modules only, a reactor-style lib (no `_start`) never runs exit handlers -> not chased. outputs need `fflush(stdout)` before return, otherwise lost
-- browser: export C ABI + Arrow C data structs from linear memory, read in JS (arrow-js-ffi does that for geoarrow-wasm?), untested
-- reactor build (`-mexec-model=reactor`), strip + wasm-opt -> real size
+- process exit crash (command modules only, bench.wasm): `RuntimeError: null function or function signature mismatch` in `__funcs_on_exit` <- `__wasm_call_dtors` <- `_start`, after main returned. only once an IDGGS was built (`DgRFNetwork` + `DgGeoSphRF` alone exit clean, plain static std::string + atexit test programs too). no dglib atexit calls, no linker warnings. dggrid.wasm is a reactor, never runs exit handlers -> irrelevant for the lib, not chased. command outputs need `fflush(stdout)` before return
+- browser demo page (map click -> cell + hexagon), not done yet. dggrid.mjs should work as is
+- Arrow C data structs from linear memory for JS (arrow-js-ffi as in geoarrow-wasm?), untested
+- wasm-opt not tried

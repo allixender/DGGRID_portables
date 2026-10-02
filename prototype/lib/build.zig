@@ -5,7 +5,10 @@
 //!   zig build dggrid                       CLI from the copy (verification vs upstream)
 //!   zig build bench -- 200000              geo -> Q2DI loop, fatal hook test
 //!   zig build smoke                        dglib cell -> GeoArrow WKB array
-//!   zig build -Dtarget=wasm32-wasi         libdglib + bench.wasm (no file IO classes)
+//!   zig build test                         C API tests (dggrid.zig)
+//!   zig build                              + libdggrid shared lib + include/dggrid.h
+//!   zig build -Dtarget=wasm32-wasi         libdglib, bench.wasm (no file IO classes),
+//!                                          dggrid.wasm (reactor exporting the C API)
 
 const std = @import("std");
 
@@ -34,7 +37,8 @@ pub fn build(b: *std.Build) void {
 
     // ---- libdglib: dglib + proj4lib + shapelib. wasm32-wasi: zig's libc++ there has
     // no <fstream>, so all file reader/writer classes (DgIn*, DgOut*) are left out.
-    const dgmod = b.createModule(.{ .target = target, .optimize = optimize, .link_libcpp = true });
+    // pic: linked into the shared libdggrid
+    const dgmod = b.createModule(.{ .target = target, .optimize = optimize, .link_libcpp = true, .pic = if (wasm) null else true });
     for (dg_includes) |p| dgmod.addIncludePath(b.path(p));
     dgmod.addCSourceFiles(.{ .files = globSorted(b, dg ++ "/lib/dglib/lib", ".cpp", wasm), .flags = cxx.items });
     dgmod.addCSourceFiles(.{ .files = globSorted(b, dg ++ "/lib/proj4lib/lib", ".cpp", false), .flags = cxx.items });
@@ -50,7 +54,26 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_bench.addArgs(args);
     b.step("bench", "Run the geo -> Q2DI benchmark (pass N after --)").dependOn(&run_bench.step);
 
+    // ---- libdggrid: public C API (dggrid.zig, include/dggrid.h) over the C++ core
+    // (dgcore.cpp). wasm: a reactor module (no main, _initialize runs the C++ static
+    // constructors) exporting exactly the C API.
+    const api = addApiModule(b, target, optimize, cxx.items, libdg);
+    if (wasm) {
+        api.export_symbol_names = &api_exports;
+        if (optimize != .Debug) api.strip = true;
+        const wasm_lib = b.addExecutable(.{ .name = "dggrid", .root_module = api });
+        wasm_lib.entry = .disabled;
+        wasm_lib.wasi_exec_model = .reactor;
+        b.installArtifact(wasm_lib);
+    } else {
+        b.installArtifact(b.addLibrary(.{ .name = "dggrid", .root_module = api, .linkage = .dynamic }));
+    }
+    b.getInstallStep().dependOn(&b.addInstallFile(b.path("include/dggrid.h"), "include/dggrid.h").step);
+
     if (wasm) return;
+
+    const tests = b.addTest(.{ .root_module = addApiModule(b, target, optimize, cxx.items, libdg) });
+    b.step("test", "Run the C API tests").dependOn(&b.addRunArtifact(tests).step);
 
     // ---- dggrid CLI from the patched copy, to verify the rewrite against upstream
     const climod = b.createModule(.{ .target = target, .optimize = optimize, .link_libcpp = true });
@@ -100,6 +123,31 @@ pub fn build(b: *std.Build) void {
     smoke.root_module.addIncludePath(b.path(ga ++ "/vendor"));
     smoke.root_module.linkLibrary(libga);
     b.step("smoke", "Run the dglib + geoarrow smoke test").dependOn(&b.addRunArtifact(smoke).step);
+}
+
+const api_exports = [_][]const u8{
+    "dg_igeo7_new",      "dg_ctx_new",         "dg_ctx_free",       "dg_last_error",
+    "dg_geo_to_z7",      "dg_z7_to_centroid",  "dg_z7_to_boundary", "dg_z7_res",
+    "dg_z7_to_string",   "dg_z7_from_string",  "dg_alloc",          "dg_free",
+};
+
+fn addApiModule(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    flags: []const []const u8,
+    libdg: *std.Build.Step.Compile,
+) *std.Build.Module {
+    const mod = b.createModule(.{
+        .root_source_file = b.path("dggrid.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libcpp = true,
+    });
+    for (dg_includes) |p| mod.addIncludePath(b.path(p));
+    mod.addCSourceFile(.{ .file = b.path("dgcore.cpp"), .flags = flags });
+    mod.linkLibrary(libdg);
+    return mod;
 }
 
 fn addExe(
