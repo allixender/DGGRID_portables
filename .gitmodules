@@ -1,0 +1,6 @@
+[submodule "DGGRID"]
+	path = DGGRID
+	url = https://github.com/sahrk/DGGRID.git
+[submodule "geoarrow-c"]
+	path = geoarrow-c
+	url = https://github.com/geoarrow/geoarrow-c.git
