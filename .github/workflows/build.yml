@@ -26,6 +26,7 @@ jobs:
     outputs:
       dggrid_version: ${{ steps.meta.outputs.dggrid_version }}
       dggrid_commit: ${{ steps.meta.outputs.dggrid_commit }}
+      patches: ${{ steps.meta.outputs.patches }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -47,6 +48,8 @@ jobs:
           ver=$(sed -n 's/^#define DGGRID_VERSION *"\(.*\)"/\1/p' DGGRID/src/lib/dglib/include/dglib/DgBase.h)
           echo "dggrid_version=$ver" >> "$GITHUB_OUTPUT"
           echo "dggrid_commit=$(git -C DGGRID rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          # publish has no checkout, so hand it the applied patch list
+          echo "patches=$(cd patches 2>/dev/null && ls -- *.patch 2>/dev/null | paste -sd' ' -)" >> "$GITHUB_OUTPUT"
 
       - name: Universal macOS binary
         run: |
@@ -191,6 +194,7 @@ jobs:
       GH_REPO: ${{ github.repository }}
       DGGRID_VERSION: ${{ needs.build.outputs.dggrid_version }}
       DGGRID_COMMIT: ${{ needs.build.outputs.dggrid_commit }}
+      PATCHES: ${{ needs.build.outputs.patches }}
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -204,7 +208,11 @@ jobs:
             echo
             echo "- upstream: sahrk/DGGRID@${DGGRID_COMMIT:0:10}"
             echo "- built from: ${GITHUB_SHA:0:10}"
-            echo "- patches on top of upstream: $(cd patches && ls *.patch | sed 's/^/`/; s/$/`/' | paste -sd, - | sed 's/,/, /g')"
+            if [ -n "$PATCHES" ]; then
+              echo "- patches on top of upstream: $(for pf in $PATCHES; do printf '`%s` ' "$pf"; done)([patches/](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/tree/${GITHUB_SHA}/patches))"
+            else
+              echo "- patches on top of upstream: none"
+            fi
             echo
             echo "| platform | asset |"
             echo "|---|---|"
