@@ -9,3 +9,7 @@ todo_notes.md
 prototype/dggrid-exe/src
 prototype/lib-geoarrow-smoke/dg
 prototype/lib-geoarrow-smoke/ga
+dist/
+stage/
+unpacked/
+__pycache__/
