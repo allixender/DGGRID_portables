@@ -223,24 +223,33 @@ host: no gcc/clang/MSYS toolchain, no arm64 execution (Win10 x64, no emulation) 
 - x86_64-windows-gnu probe locally: all functions <= 1 ulp except `acosl` near 1 (2e5 ulp at x=1-1e-10, i.e. ~7e-16 rad absolute) -> mingw x87 `acosl = atanl(sqrtl(1-x^2)/x)` cancellation, harmless. `sscanf %Lf` = 0 without the ANSI define (expected, build.zig sets it)
 - release dggrid.exe imports from api-ms-win-crt-math: arm64 `acos asin atan atan2 pow llrintl lround`, x86_64 only `acos asin atan2 lround` (DGGRID's few plain-double calls; the 15 acosl / 11 asinl / 13 atan2l / 9 atanl uses are mingw x87 code there, UCRT on arm64)
 - -> suspects for win-arm64: Microsoft's arm64 UCRT `acos/asin/atan2/pow` (the only functions that differ in provenance from linux/mac). 6e-5 deg ~ 1e-6 rad is far beyond any 1-ulp libm noise (mac vs linux differences are ~1e-14), would need float-ish precision in one of them
-- `.github/workflows/precision.yml` (manual or push to `probe/**`, never publishes): cross-builds the probe on ubuntu, runs on windows-11-arm (+ MSVC `cl` arm64 build as UCRT cross-check), windows-2025 (with/without ANSI define), macos-15, macos-15-intel, ubuntu x86_64/arm64, compares vs mpmath + win-arm64 vs mac-arm64 in the step summary. NOT run yet
+- `.github/workflows/precision.yml` (manual or push to `probe/**`, never publishes): cross-builds the probe on ubuntu, runs on windows-11-arm (+ MSVC `cl` arm64 build as UCRT cross-check), windows-2025 (with/without ANSI define), macos-15, macos-15-intel, ubuntu x86_64/arm64, compares vs mpmath + win-arm64 vs mac-arm64 in the step summary
+- run 1 (37028962223, push probe/ldmath): all 7 runner jobs ok incl MSVC arm64, compare job failed: system `pip install` blocked by PEP 668 on ubuntu-24.04 -> venv, re-pushed (47e1c98). results -> next session
 - if UCRT confirmed: workaround = link own acos/asin/atan2/pow for aarch64-windows (e.g. compile musl/compiler_rt versions under the `*l` names or `-Wl,--defsym`), keeps UCRT for the rest
 
 ### upstream fix: binary-mode output streams (DONE locally, patch ready)
 
-- `upstream/0001-Write-output-files-in-binary-mode-fixes-invalid-GeoJ.patch` (git format-patch against 688940b, applies clean; local commit 58e4ae5 on branch `fix/binary-output-streams` in the DGGRID submodule clone only, submodule pin unchanged)
+- `patches/0001-output-streams-binary-mode.patch` (git format-patch against 688940b, applies clean). no fork branch, the patch file is the deliverable for Kevin
 - not only `DgOutputStream.cpp:65`: text-mode writers were also `DgOutShapefile.cpp:110` (.prj), `SubOpOut.cpp:959` (TEXT data output: transform / binvals / binpres), `SubOpBasicMulti.cpp:207` (multi-grid meta file). all 4 -> `std::ios::out | std::ios::binary`. input streams untouched (text mode keeps accepting CRLF .meta on windows)
 - before (windows-x86_64): both gridgenGeoJSON files end `}},]}\r\n` -> `json.load` fails, all 83 text outputs CRLF
 - after: both GeoJSON parse (49 features each), every DGGRID output LF, 63 of 66 example output files byte-identical to linux-x86_64 (rest = the 3 superfundGrid .shp 1-ulp diffs above)
 - side note for the PR, not fixed: `postamble()` with zero features would seek back over `:[` -> also invalid, any platform
 - open: PR to sahrk/DGGRID needs a fork push (no gh on this host); bundle with the MSVC fixes or send alone (small, self-contained -> alone is easier to review)
 
+### patches/ applied in our build (decision 2026-10-02)
+
+- no DGGRID fork branches: fixes we need live as `git format-patch` files in `patches/NNNN-*.patch`, for upstream to pick up; until merged we apply them ourselves
+- `ci/apply_patches.sh`: in order, per patch `git apply --check` -> apply; `--reverse --check` ok -> skip (upstream merged it / re-run); else `::error::` + fail -> a watchdog bump that conflicts fails the build job = refresh signal. idempotent, run once locally before `zig build` (build.zig header says so)
+- build.yml: runs it in build + ubsan jobs, BUILDINFO lists `patch: <file>` lines, release notes list patches; known issues trimmed to arm64 only (x86_64 printing fixed by the facet, GeoJSON by patch 0001)
+- `.gitattributes`: `*.patch -text` (with global autocrlf=true the patch got CRLF in the worktree -> `git apply` failed on every hunk), `*.sh text eol=lf` (fixes the WSL `run_examples.sh` CRLF issue too)
+- when upstream merges a patch: script reports "already present, skipped" after the bump -> delete the file
+
 ## open / next
 
 - windows-x86_64: report libc++ ANSI_STDIO bug to zig; drop `src/mingw_ldouble_numput.cpp` once fixed upstream. edge release notes: x86_64 known issue resolved after next main push
-- windows-arm64: run `precision.yml` (push `probe/ldmath` or workflow_dispatch) -> confirm UCRT acos/asin/atan2/pow, then workaround
-- upstream PR: binary-mode patch ready in `upstream/`; MSVC template fixes still open
-- windows GeoJSON in our releases stays broken until upstream merges (or we apply `upstream/*.patch` at build time)
+- windows-arm64: read precision-probe results (run after 47e1c98 on probe/ldmath) -> confirm UCRT acos/asin/atan2/pow, then workaround
+- upstream: hand `patches/0001-output-streams-binary-mode.patch` to Kevin; MSVC template fixes could become `patches/0002`, `0003` the same way
+- merge windows/x86_64-ldouble -> main (PR) -> edge release with the x86_64 fixes
 - CI value regression: compare against linux-x86_64 output per run (x86_64 platforms should be identical), fail on int/text diffs
 
 - regression oracle = native gcc linux output, not sampleOutput (step 4, not in CI yet)

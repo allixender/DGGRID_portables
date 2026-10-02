@@ -5,6 +5,10 @@
 //!                                  zig-out/release/<platform>/dggrid[.exe]
 //!   zig build -Dubsan=true ...     UB sanitizer in trap mode (CI check, not for shipping)
 //!
+//! Fixes not (yet) upstream live in patches/*.patch and are applied to the submodule
+//! by `ci/apply_patches.sh` (idempotent; CI runs it before every build). Run it once
+//! locally too, otherwise you build plain upstream.
+//!
 //! Source lists are globbed (sorted, non-recursive) from the upstream lib/app dirs,
 //! which matches upstream's CMakeLists exactly, so submodule bumps need no edits here.
 

@@ -35,6 +35,9 @@ jobs:
         with:
           version: ${{ env.ZIG_VERSION }}
 
+      - name: Apply DGGRID patches (patches/*.patch)
+        run: ci/apply_patches.sh
+
       - name: Build release targets
         run: zig build release --summary new
 
@@ -73,6 +76,7 @@ jobs:
               echo "upstream commit: https://github.com/sahrk/DGGRID/commit/${DGGRID_COMMIT}"
               echo "built from:      ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
               echo "zig:             ${ZIG_VERSION}"
+              for pf in patches/*.patch; do echo "patch:           $(basename "$pf")"; done
               echo "license:         AGPL-3.0 (see LICENSE)"
             } > "$stage/BUILDINFO.txt"
             # asset names without version -> stable URLs, e.g. releases/download/edge/dggrid-linux-x86_64.tar.gz
@@ -100,6 +104,7 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
+      - run: ci/apply_patches.sh
       - run: zig build -Doptimize=ReleaseSafe -Dubsan=true
       - run: ci/run_examples.sh zig-out/bin/dggrid "$RUNNER_TEMP/examples"
 
@@ -199,6 +204,7 @@ jobs:
             echo
             echo "- upstream: sahrk/DGGRID@${DGGRID_COMMIT:0:10}"
             echo "- built from: ${GITHUB_SHA:0:10}"
+            echo "- patches on top of upstream: $(cd patches && ls *.patch | sed 's/^/`/; s/$/`/' | paste -sd, - | sed 's/,/, /g')"
             echo
             echo "| platform | asset |"
             echo "|---|---|"
@@ -207,9 +213,7 @@ jobs:
             echo "Checksums in \`SHA256SUMS\`. macOS: downloaded binaries are not notarised, run \`xattr -d com.apple.quarantine dggrid\` once."
             echo
             echo "**Known issues (Windows):**"
-            echo "- x86_64: grid coordinates are correct, but values written via C++ streams are not: the earth radius in shapefile \`.prj\` files and \`long double\` values in the log/parameter echo."
-            echo "- arm64: coordinates can differ by up to ~1e-5 degrees from other platforms; clipped grids may include slightly different boundary cells."
-            echo "- GeoJSON output has a trailing comma before the closing \`]}\` (upstream DGGRID issue, text-mode line endings)."
+            echo "- arm64: coordinates can differ by up to ~1e-5 degrees from other platforms; clipped grids may include slightly different boundary cells (under investigation)."
             echo
             echo "Details: [build_notes.md](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/build_notes.md)"
           } > notes.md
