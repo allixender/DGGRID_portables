@@ -1,0 +1,103 @@
+# long double libm accuracy probe (ci/precision/ldmath.cpp), cross-built with zig,
+# run on native runners, compared against an mpmath correctly rounded reference.
+# manual or push to probe/** only, never publishes anything.
+name: precision-probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['probe/**']
+    paths: ['ci/precision/**', '.github/workflows/precision.yml']
+
+env:
+  ZIG_VERSION: 0.16.0
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Cross-build probe
+        run: |
+          mkdir -p out
+          for t in aarch64-windows-gnu x86_64-windows-gnu aarch64-macos.11.0 x86_64-macos.11.0 x86_64-linux-musl aarch64-linux-musl; do
+            ext=; case $t in *windows*) ext=.exe;; esac
+            zig c++ -std=c++11 -D_USE_MATH_DEFINES -O2 -target $t ci/precision/ldmath.cpp -o out/ldmath-$t$ext
+          done
+          # same as build.zig for the release binary
+          zig c++ -std=c++11 -D_USE_MATH_DEFINES -D__USE_MINGW_ANSI_STDIO=1 -O2 -target x86_64-windows-gnu ci/precision/ldmath.cpp -o out/ldmath-x86_64-windows-gnu-ansi.exe
+          rm -f out/*.pdb
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ldmath-bin
+          path: out/
+
+  run:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: windows-11-arm, exe: ldmath-aarch64-windows-gnu.exe, msvc: true }
+          - { runner: windows-2025, exe: ldmath-x86_64-windows-gnu.exe }
+          - { runner: windows-2025, exe: ldmath-x86_64-windows-gnu-ansi.exe }
+          - { runner: macos-15, exe: ldmath-aarch64-macos.11.0 }
+          - { runner: macos-15-intel, exe: ldmath-x86_64-macos.11.0 }
+          - { runner: ubuntu-24.04, exe: ldmath-x86_64-linux-musl }
+          - { runner: ubuntu-24.04-arm, exe: ldmath-aarch64-linux-musl }
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: ldmath-bin
+          path: bin
+      - name: Run probe
+        run: |
+          mkdir -p res
+          chmod +x bin/${{ matrix.exe }}
+          ./bin/${{ matrix.exe }} > res/${{ matrix.runner }}--${{ matrix.exe }}.txt
+          head -3 res/*.txt
+      - name: MSVC build (same UCRT, cross-check)
+        if: matrix.msvc
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          cmd /c "`"$vs\VC\Auxiliary\Build\vcvarsall.bat`" arm64 && cl /nologo /O2 /EHsc /D_USE_MATH_DEFINES ci\precision\ldmath.cpp /Fe:ldmath-msvc.exe"
+          .\ldmath-msvc.exe | Out-File -Encoding ascii "res\${{ matrix.runner }}--ldmath-msvc-arm64.txt"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ldmath-res-${{ matrix.runner }}-${{ matrix.exe }}
+          path: res/
+
+  compare:
+    needs: run
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: ldmath-res-*
+          merge-multiple: true
+          path: res
+      - name: Compare vs mpmath reference
+        run: |
+          pip install --quiet mpmath
+          for f in res/*.txt; do
+            python3 ci/precision/ldmath_compare.py "$f" > "${f%.txt}.cmp"
+            { echo "### $(basename "$f")"; echo '```'; sed -n '/^# worst/,$p' "${f%.txt}.cmp"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          done
+          mac=$(ls res/macos-15--*aarch64* | head -1)
+          win=$(ls res/windows-11-arm--ldmath-aarch64* | head -1)
+          python3 ci/precision/ldmath_compare.py "$win" "$mac" > res/win-arm64-vs-mac-arm64.cmp
+          { echo "### win-arm64 vs mac-arm64, rows differing"; echo '```'; awk '$NF != "0" && /ulp_diff/' res/win-arm64-vs-mac-arm64.cmp | sort -k11 -g -r | head -60; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ldmath-compare
+          path: res/
