@@ -1,0 +1,71 @@
+From 58435d9280d789fe96f25d8f7663e841c43b58f2 Mon Sep 17 00:00:00 2001
+From: Alexander Kmoch <alex@geolynx.ee>
+Date: Fri, 2 Oct 2026 20:59:37 +0300
+Subject: [PATCH] DgBase: fatal hook, lets a library embedding dglib
+ throw/abort instead of exit(1)
+
+report(..., Fatal) calls the hook set via DgBase::setFatalHook() first, regardless
+of minReportLevel. Default NULL -> unchanged behaviour (print + exit(1)).
+---
+ src/lib/dglib/include/dglib/DgBase.h | 11 +++++++++++
+ src/lib/dglib/lib/DgBase.cpp         |  4 ++++
+ 2 files changed, 15 insertions(+)
+
+diff --git a/src/lib/dglib/include/dglib/DgBase.h b/src/lib/dglib/include/dglib/DgBase.h
+index 43fc688..43349f7 100644
+--- a/src/lib/dglib/include/dglib/DgBase.h
++++ b/src/lib/dglib/include/dglib/DgBase.h
+@@ -62,10 +62,17 @@ class DgBase {
+ 
+       enum DgReportLevel { Debug1, Debug0, Info, Warning, Fatal, Silent };
+ 
++      // Called with the message on every Fatal report, before anything is printed
++      // and regardless of minReportLevel. A library embedding dglib can throw or
++      // abort here instead of letting the process exit. If the hook returns, the
++      // default behaviour (print, then exit(1)) follows.
++      typedef void (*DgFatalHook) (const std::string& message);
++
+    private:
+ 
+       static const std::string defaultName;
+       static DgReportLevel minReportLevel_;
++      static DgFatalHook fatalHook_;
+ 
+    public:
+ 
+@@ -76,6 +83,10 @@ class DgBase {
+ 
+       static DgReportLevel minReportLevel (void) { return minReportLevel_; }
+ 
++      static void setFatalHook (DgFatalHook hook) { fatalHook_ = hook; }
++
++      static DgFatalHook fatalHook (void) { return fatalHook_; }
++
+       static bool testArgEqual (int argc, int expected,
+                                 const std::string& message = std::string("invalid argument count"),
+                      DgReportLevel level = Fatal);
+diff --git a/src/lib/dglib/lib/DgBase.cpp b/src/lib/dglib/lib/DgBase.cpp
+index c3a1202..1a94490 100644
+--- a/src/lib/dglib/lib/DgBase.cpp
++++ b/src/lib/dglib/lib/DgBase.cpp
+@@ -30,6 +30,7 @@
+ 
+ const std::string DgBase::defaultName = "UNDEFNAME";
+ DgBase::DgReportLevel DgBase::minReportLevel_ = DgBase::Info;
++DgBase::DgFatalHook DgBase::fatalHook_ = NULL;
+ 
+ ////////////////////////////////////////////////////////////////////////////////
+ ////////////////////////////////////////////////////////////////////////////////
+@@ -44,6 +45,9 @@ void report (const std::string& message, DgBase::DgReportLevel level)
+ //
+ ////////////////////////////////////////////////////////////////////////////////
+ {
++   if (level == DgBase::Fatal && DgBase::fatalHook())
++      DgBase::fatalHook()(message);
++
+    if (level < DgBase::minReportLevel()) return;
+ 
+    switch (level)
+-- 
+2.52.0
+

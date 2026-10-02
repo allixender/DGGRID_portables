@@ -7,9 +7,8 @@ out/
 todo_notes.md
 # prototype symlinks into submodules
 prototype/dggrid-exe/src
-prototype/lib-geoarrow-smoke/dg
-prototype/lib-geoarrow-smoke/ga
 dist/
 stage/
 unpacked/
 __pycache__/
+prototype/lib/.src/
