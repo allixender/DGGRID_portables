@@ -88,16 +88,18 @@ jobs:
           path: res
       - name: Compare vs mpmath reference
         run: |
-          pip install --quiet mpmath
+          python3 -m venv .venv && .venv/bin/pip install --quiet mpmath  # PEP 668: no system pip on 24.04
+          ls -la res/
           for f in res/*.txt; do
-            python3 ci/precision/ldmath_compare.py "$f" > "${f%.txt}.cmp"
+            .venv/bin/python ci/precision/ldmath_compare.py "$f" > "${f%.txt}.cmp"
             { echo "### $(basename "$f")"; echo '```'; sed -n '/^# worst/,$p' "${f%.txt}.cmp"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           done
           mac=$(ls res/macos-15--*aarch64* | head -1)
           win=$(ls res/windows-11-arm--ldmath-aarch64* | head -1)
-          python3 ci/precision/ldmath_compare.py "$win" "$mac" > res/win-arm64-vs-mac-arm64.cmp
+          .venv/bin/python ci/precision/ldmath_compare.py "$win" "$mac" > res/win-arm64-vs-mac-arm64.cmp
           { echo "### win-arm64 vs mac-arm64, rows differing"; echo '```'; awk '$NF != "0" && /ulp_diff/' res/win-arm64-vs-mac-arm64.cmp | sort -k11 -g -r | head -60; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
+        if: always()
         with:
           name: ldmath-compare
           path: res/
