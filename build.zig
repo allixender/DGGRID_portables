@@ -5,6 +5,10 @@
 //!                                  zig-out/release/<platform>/dggrid[.exe]
 //!   zig build -Dubsan=true ...     UB sanitizer in trap mode (CI check, not for shipping)
 //!
+//! Fixes not (yet) upstream live in patches/*.patch and are applied to the submodule
+//! by `ci/apply_patches.sh` (idempotent; CI runs it before every build). Run it once
+//! locally too, otherwise you build plain upstream.
+//!
 //! Source lists are globbed (sorted, non-recursive) from the upstream lib/app dirs,
 //! which matches upstream's CMakeLists exactly, so submodule bumps need no edits here.
 
@@ -79,9 +83,13 @@ fn addDggrid(
     // MinGW x86_64: long double is 80-bit x87, but UCRT's printf family reads %Lf as a
     // 64-bit double, so every "%LF" coordinate came out as 0.0. mingw-w64's own stdio
     // handles 80-bit long double. (aarch64: long double == double, UCRT is correct.)
-    // Does not reach libc++'s internal printf, see build_notes.md (ostream << long double).
-    if (target.result.os.tag == .windows and target.result.cpu.arch == .x86_64)
+    // That define does not reach zig's prebuilt libc++ (ostream << long double still
+    // went through UCRT), so also install a num_put facet that formats long double
+    // with mingw-w64's printf, see src/mingw_ldouble_numput.cpp and build_notes.md.
+    if (target.result.os.tag == .windows and target.result.cpu.arch == .x86_64) {
         mod.addCMacro("__USE_MINGW_ANSI_STDIO", "1");
+        mod.addCSourceFile(.{ .file = b.path("src/mingw_ldouble_numput.cpp"), .flags = &cxx_flags });
+    }
 
     mod.addCSourceFiles(.{ .files = globSources(b, src_root ++ "/lib/dglib/lib", ".cpp"), .flags = &cxx_flags });
     mod.addCSourceFiles(.{ .files = globSources(b, src_root ++ "/lib/dgaplib/lib", ".cpp"), .flags = &cxx_flags });
