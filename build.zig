@@ -76,6 +76,12 @@ fn addDggrid(
         .sanitize_c = if (ubsan) .trap else .off,
     });
     for (include_dirs) |dir| mod.addIncludePath(b.path(dir));
+    // MinGW x86_64: long double is 80-bit x87, but UCRT's printf family reads %Lf as a
+    // 64-bit double, so every "%LF" coordinate came out as 0.0. mingw-w64's own stdio
+    // handles 80-bit long double. (aarch64: long double == double, UCRT is correct.)
+    // Does not reach libc++'s internal printf, see build_notes.md (ostream << long double).
+    if (target.result.os.tag == .windows and target.result.cpu.arch == .x86_64)
+        mod.addCMacro("__USE_MINGW_ANSI_STDIO", "1");
 
     mod.addCSourceFiles(.{ .files = globSources(b, src_root ++ "/lib/dglib/lib", ".cpp"), .flags = &cxx_flags });
     mod.addCSourceFiles(.{ .files = globSources(b, src_root ++ "/lib/dgaplib/lib", ".cpp"), .flags = &cxx_flags });
