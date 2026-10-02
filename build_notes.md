@@ -165,8 +165,39 @@ test dir `karula:/home/akmoch/dev/build/DGGRID_portable_tests` (DGGRID src copy,
 - `.github/workflows/watchdog.yml`: daily 05:17 UTC + manual, `git ls-remote` sahrk master vs pinned submodule -> branch `watchdog/dggrid-<sha10>` + PR with upstream commit list -> `gh workflow run build.yml --ref <branch>` (GITHUB_TOKEN PRs don't trigger workflows). needs repo setting "Allow GitHub Actions to create and approve pull requests"
 - action versions pinned to majors as of 2026-10: checkout@v7, upload-artifact@v7, download-artifact@v8, setup-zig@v2
 - windows deep testing: separate, claude agent on a windows host with this file as context
+- test jobs upload example outputs as artifacts `outputs-<platform>-<runner>` (14 days) -> `gh run download <id> -n ...` for cross-platform diffs
+
+### first CI runs (PR #1, runs 37007898855 / 37008932160 / 37009571304)
+
+- run 1: all non-windows test jobs failed in my unpack step: `ls unpacked/*/dggrid unpacked/*/dggrid.exe` under the runner's `bash -e -o pipefail` -> exit 2 when one glob misses. windows passed only because MSYS resolves `dggrid` -> `dggrid.exe`. fixed with a `[ -f ]` loop
+- run 2: all green: build 7m47s (zig release on ubuntu, mostly zig cache cold), ubsan ok, 8 native test jobs 32/32 examples rc=0 incl. both macos-universal slices, linux-arm64 native runner ok
+- BUT rc=0 is not enough on windows, value compare from the uploaded outputs:
+
+#### windows-x86_64 (windows-2025): long double printing broken
+
+- every `%LF` value printed as `0.0000000` (KML/GeoJSON/gen coords, .prj radius 0.000000000000), param echo `dggs_vert0_lon 3.30407e-312` (= pointer bits read as double)
+- cause: zig's MinGW headers -> `__USE_MINGW_ANSI_STDIO=0` (UCRT, `__MSVCRT_VERSION__ >= 0xE00`, clang doesn't define `_GNU_SOURCE` for mingw C++) -> UCRT `snprintf` reads `%Lf` as 64-bit double, but MinGW x86_64 long double is 80-bit x87 (passed by reference in Win64 varargs) -> garbage/0
+- fix (build.zig, x86_64 windows only): `__USE_MINGW_ANSI_STDIO=1` -> mingw-w64's own printf handles 80-bit. run 3: 56 output files identical to linux-x86_64 (modulo CRLF) -> parsing + computation were always fine, only printing broken
+- still broken: `ostream << long double` inside libc++ (zig-built, our defines don't reach it) -> param echo `4.72715e-312`, .prj radius (`DgOutShapefile.cpp:141`, `prjFile << std::fixed << earthRadiusM`), superfundGrid .shp differs (not chased). looks like zig/libc++-on-mingw-ucrt bug -> check llvm-mingw behaviour, report to zig? workaround options: custom num_put, or upstream printf instead of ostream for long double
+- windows-arm64 (windows-11-arm): printing ok (long double == double, UCRT `%Lf` matches)
+
+#### windows-arm64: precision ca 1e-5 deg vs macos-arm64
+
+- same LDBL width (53) as macos-arm64, but 23 files differ: up to 6e-5 deg (ca 6.7 m) in isea7hGen/determineRes/igeo7, plus ±0 and pole-lon (39.88 deg) artefacts
+- clip examples select different cells: z3CellClip 4140 lines (win-arm64) vs 4108 (mac/linux) vs 4076 (sampleOutput), zCellClip 4172 vs 4140
+- integer outputs (mixed.chd/.nbr) identical -> topology fine, float math less accurate -> suspect mingw-w64 arm64 libm (`sinl`/`cosl`/`acosl`/`atan2l` generic implementations?) -> microbench per function vs macOS at %.17g = first task for windows-host agent
+
+#### upstream bug: GeoJSON trailing comma on windows
+
+- `DgOutGeoJSONFile.cpp:72-73`: `seekp(tellp() - 2)` to drop trailing `,\n`, but `DgOutputStream::open` uses text mode (`std::ios::out`) -> on windows `\n` = `\r\n` -> comma stays -> `}},]}` = invalid GeoJSON (both windows targets)
+- fix upstream: `std::ios::out | std::ios::binary` in `DgOutputStream.cpp:65` -> also LF everywhere = byte-identical outputs across OSes. candidate for first upstream PR (with MSVC fixes)
 
 ## open / next
+
+- windows-x86_64: libc++ `ostream << long double` (prj radius, logs, stats?) -> investigate / workaround
+- windows-arm64: 1e-5 deg precision vs macos-arm64, cell selection differs in clip examples -> windows-host agent
+- upstream PR: binary-mode output streams (GeoJSON comma + CRLF), MSVC template fixes
+- CI value regression: compare against linux-x86_64 output per run (x86_64 platforms should be identical), fail on int/text diffs
 
 - regression oracle = native gcc linux output, not sampleOutput (step 4, not in CI yet)
 - macos gatekeeper / notarisation (cf. CODESIGNING.md in fork)

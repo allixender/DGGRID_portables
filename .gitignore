@@ -12,3 +12,4 @@ prototype/lib-geoarrow-smoke/ga
 dist/
 stage/
 unpacked/
+__pycache__/
