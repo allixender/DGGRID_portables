@@ -142,10 +142,15 @@ jobs:
           else
             tar -C unpacked -xzf "dist/dggrid-${{ matrix.platform }}.tar.gz"
           fi
-          exe=$(ls unpacked/*/dggrid unpacked/*/dggrid.exe 2>/dev/null | head -1)
+          exe=""
+          for f in unpacked/*/dggrid.exe unpacked/*/dggrid; do
+            if [ -f "$f" ]; then exe=$f; break; fi
+          done
+          [ -n "$exe" ] || { echo "::error::no dggrid binary in archive"; exit 1; }
           echo "EXE=$exe" >> "$GITHUB_ENV"
           cat unpacked/*/BUILDINFO.txt
-          "$exe" -v | head -2
+          "$exe" -v > version.txt 2>&1 || true
+          head -2 version.txt
 
       - name: Run examples
         run: ci/run_examples.sh "$EXE" "$RUNNER_TEMP/examples"
@@ -156,6 +161,14 @@ jobs:
         run: |
           py=python3; [ "$RUNNER_OS" = Windows ] && py=python
           $py ci/compare_outputs.py "$RUNNER_TEMP/examples"
+
+      - name: Upload example outputs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: outputs-${{ matrix.platform }}-${{ matrix.runner }}
+          path: ${{ runner.temp }}/examples/*/outputfiles/
+          retention-days: 14
 
   publish:
     needs: [build, test, ubsan]
