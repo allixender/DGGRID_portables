@@ -31,6 +31,8 @@ def load(path):
         if line.startswith("# LDBL_MANT_DIG"):
             mant = int(line.split()[-1])
             continue
+        if line.startswith("#"):  # other comments, eg a .cmp file passed by mistake
+            continue
         f = line.split()
         if len(f) >= 4:
             rows.append((f[0], float(f[1]), float(f[2]), float(f[3])))
