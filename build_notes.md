@@ -227,6 +227,19 @@ host: no gcc/clang/MSYS toolchain, no arm64 execution (Win10 x64, no emulation) 
 - run 1 (37028962223, push probe/ldmath): all 7 runner jobs ok incl MSVC arm64, compare job failed: system `pip install` blocked by PEP 668 on ubuntu-24.04 -> venv, re-pushed (47e1c98). results -> next session
 - if UCRT confirmed: workaround = link own acos/asin/atan2/pow for aarch64-windows (e.g. compile musl/compiler_rt versions under the `*l` names or `-Wl,--defsym`), keeps UCRT for the rest
 
+#### 2026-10-02 probe results (run 37030431165, desktop session) -> NOT libm, it's UCRT printf rounding
+
+- compare job failed again (win-arm64 vs mac-arm64 step: a filename ends up in a number field in `ldmath_compare.py load()`), but per-platform `.cmp` vs mpmath complete in artifact `ldmath-compare`
+- worst ulp vs correctly rounded double: win-arm64 gnu AND msvc: all <= 1 ulp (sinl/cosl/tanl/atanl/asinl/acosl/atan2l), powl/sqrtl 0. mac-arm64 <= 2 (tanl). linux musl x86_64/arm64 <= 1
+- win-arm64 vs mac-arm64 raw: 384/3696 rows differ, max rel 3.4e-16 (1-2 ulp) -> UCRT acos/asin/atan2/pow suspicion refuted, own-libm workaround NOT needed
+- x87 outliers harmless: macos-intel `tanl` 2.7e11 ulp at x=1.5707963267948966 (pole) and 1.6e11 at 2pi (fsin/fptan 66-bit pi), win-x86_64 `acosl` 2e5 ulp at 1-1e-10 (abs ~7e-16 rad)
+- snyderInv Newton loop tolerance `PRECISION 5e-13` rad (DgEllipsoidRF.h:382) -> can't amplify to 1e-5 deg either
+- actual cause, from example outputs (run 37008932160): 1920/1943 differing numbers in isea7hGen differ by exactly 1 in the LAST PRINTED digit (precision 5 there, eg `-2.46119` vs `-2.46120`)
+- arbitration vs linux-x86_64 (80-bit, most precise): in ALL 17290 disagreements (isea7hGen, determineRes, igeo7WholeEarth) linux agrees with mac-arm64, never with win-arm64 -> UCRT `%LF` rounding on arm64 is wrong (looks like rounding from 17 sig digits / double rounding)
+- -> fix candidate: `__USE_MINGW_ANSI_STDIO=1` + `src/mingw_ldouble_numput.cpp` also for aarch64-windows (check mingw pformat with long double == double), target: win-arm64 byte-identical to mac-arm64
+- open: z3CellClip/zCellClip cell count differs on win-arm64 (4140 vs 4108 lines) -> recheck after printf fix, may be a separate cause
+- 6fd86dd check (run 37031525334): win-x86_64 vs linux-x86_64 byte-identical 63/66 (binary-mode patch -> no CRLF), 3 superfundGrid .shp differ in 6 bytes (1 ulp doubles, eg 42.6060412921882 vs 42.606041292188195), GeoJSON valid JSON, param echo `11.25`. win-arm64 vs mac-arm64 still 26 files differ (fixes are x86_64-only)
+
 ### upstream fix: binary-mode output streams (DONE locally, patch ready)
 
 - `patches/0001-output-streams-binary-mode.patch` (git format-patch against 688940b, applies clean). no fork branch, the patch file is the deliverable for Kevin
@@ -247,14 +260,12 @@ host: no gcc/clang/MSYS toolchain, no arm64 execution (Win10 x64, no emulation) 
 ## open / next
 
 - windows-x86_64: report libc++ ANSI_STDIO bug to zig; drop `src/mingw_ldouble_numput.cpp` once fixed upstream. edge release notes: x86_64 known issue resolved after next main push
-- windows-arm64: read precision-probe results (run after 47e1c98 on probe/ldmath) -> confirm UCRT acos/asin/atan2/pow, then workaround
+- windows-arm64: printf rounding (not libm, see probe results) -> ANSI stdio + num_put facet for aarch64-windows too, verify byte-identical vs mac-arm64; fix compare step in ldmath_compare.py; then decide probe/ldmath (merge or delete)
 - upstream: hand `patches/0001-output-streams-binary-mode.patch` to Kevin; MSVC template fixes could become `patches/0002`, `0003` the same way
-- merge windows/x86_64-ldouble -> main (PR) -> edge release with the x86_64 fixes
+- DONE 2026-10-02: PR #2 windows/x86_64-ldouble merged -> edge rebuilt with x86_64 fixes (branch kept for the windows session)
 - CI value regression: compare against linux-x86_64 output per run (x86_64 platforms should be identical), fail on int/text diffs
 
 - regression oracle = native gcc linux output, not sampleOutput (step 4, not in CI yet)
 - macos gatekeeper / notarisation (cf. CODESIGNING.md in fork)
-- universal macos binary: in build.yml via llvm-lipo, verify on runners
-- windows binaries: first execution in CI test matrix, deeper tests via agent on windows host
 - upstream: MSVC fixes (`::DgDiscTopoRF`, DgRF.hpp:308), precision typedef for long double (perf everywhere + aarch64-linux)
 - geoarrow: C API / writer on top of libdglib + libgeoarrow
