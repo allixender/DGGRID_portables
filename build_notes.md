@@ -192,6 +192,13 @@ test dir `karula:/home/akmoch/dev/build/DGGRID_portable_tests` (DGGRID src copy,
 - `DgOutGeoJSONFile.cpp:72-73`: `seekp(tellp() - 2)` to drop trailing `,\n`, but `DgOutputStream::open` uses text mode (`std::ios::out`) -> on windows `\n` = `\r\n` -> comma stays -> `}},]}` = invalid GeoJSON (both windows targets)
 - fix upstream: `std::ios::out | std::ios::binary` in `DgOutputStream.cpp:65` -> also LF everywhere = byte-identical outputs across OSes. candidate for first upstream PR (with MSVC fixes)
 
+### 2026-10-02 merged PR #1 -> first edge pre-release
+
+- https://github.com/allixender/DGGRID_portables/releases/tag/edge, "edge: DGGRID 9.0b @ 688940b", 7 archives 0.6-1.2 MB + SHA256SUMS, release notes carry windows known issues
+- public download of macos-universal checked: both slices, runs, BUILDINFO ok
+- watchdog manual run: pinned == upstream 688940b -> "up to date". PR-creation path untested until sahrk master moves
+- build.yml: `paths-ignore` `**.md` + `prototype/**` -> notes-only pushes don't rebuild/republish edge (tags still always build)
+
 ## open / next
 
 - windows-x86_64: libc++ `ostream << long double` (prj radius, logs, stats?) -> investigate / workaround
