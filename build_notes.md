@@ -240,6 +240,10 @@ host: no gcc/clang/MSYS toolchain, no arm64 execution (Win10 x64, no emulation) 
 - open: z3CellClip/zCellClip cell count differs on win-arm64 (4140 vs 4108 lines) -> recheck after printf fix, may be a separate cause
 - 6fd86dd check (run 37031525334): win-x86_64 vs linux-x86_64 byte-identical 63/66 (binary-mode patch -> no CRLF), 3 superfundGrid .shp differ in 6 bytes (1 ulp doubles, eg 42.6060412921882 vs 42.606041292188195), GeoJSON valid JSON, param echo `11.25`. win-arm64 vs mac-arm64 still 26 files differ (fixes are x86_64-only)
 
+- 2026-10-02 evening: probe compare fixed on probe/ldmath (769b121, `*.txt` pattern; `load()` skips `#` lines), run 37034716985 green end to end -> win-arm64 vs mac-arm64: 384/3696 rows differ, max 2 ulp -> confirms analysis above, libm not the cause
+- arm64 printf fix PARKED (decision 2026-10-02). edge release notes keep the win-arm64 known issue
+- windows host local main checkout: binary-mode patch still applied in submodule (`m DGGRID` / -dirty), harmless, apply_patches.sh handles it
+
 ### upstream fix: binary-mode output streams (DONE locally, patch ready)
 
 - `patches/0001-output-streams-binary-mode.patch` (git format-patch against 688940b, applies clean). no fork branch, the patch file is the deliverable for Kevin
@@ -260,7 +264,9 @@ host: no gcc/clang/MSYS toolchain, no arm64 execution (Win10 x64, no emulation) 
 ## open / next
 
 - windows-x86_64: report libc++ ANSI_STDIO bug to zig; drop `src/mingw_ldouble_numput.cpp` once fixed upstream. edge release notes: x86_64 known issue resolved after next main push
-- windows-arm64: printf rounding (not libm, see probe results) -> ANSI stdio + num_put facet for aarch64-windows too, verify byte-identical vs mac-arm64; fix compare step in ldmath_compare.py; then decide probe/ldmath (merge or delete)
+- windows-arm64 (parked): printf rounding (not libm) -> ANSI stdio + num_put facet for aarch64-windows too, target byte-identical vs mac-arm64, then recheck z3CellClip/zCellClip
+- decide probe/ldmath: merge (keeps precision.yml + ci/precision/ as reusable probe) or delete
+- CI value check: linux-x86_64 output as reference, fail on int/text diffs (rc-only checks missed the win-x86_64 zero-coords bug)
 - upstream: hand `patches/0001-output-streams-binary-mode.patch` to Kevin; MSVC template fixes could become `patches/0002`, `0003` the same way
 - DONE 2026-10-02: PR #2 windows/x86_64-ldouble merged -> edge rebuilt with x86_64 fixes (branch kept for the windows session)
 - CI value regression: compare against linux-x86_64 output per run (x86_64 platforms should be identical), fail on int/text diffs
