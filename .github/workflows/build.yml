@@ -203,6 +203,13 @@ jobs:
             for f in dist/dggrid-*; do echo "| ${f#dist/dggrid-} | \`$(basename "$f")\` |"; done
             echo
             echo "Checksums in \`SHA256SUMS\`. macOS: downloaded binaries are not notarised, run \`xattr -d com.apple.quarantine dggrid\` once."
+            echo
+            echo "**Known issues (Windows):**"
+            echo "- x86_64: grid coordinates are correct, but values written via C++ streams are not: the earth radius in shapefile \`.prj\` files and \`long double\` values in the log/parameter echo."
+            echo "- arm64: coordinates can differ by up to ~1e-5 degrees from other platforms; clipped grids may include slightly different boundary cells."
+            echo "- GeoJSON output has a trailing comma before the closing \`]}\` (upstream DGGRID issue, text-mode line endings)."
+            echo
+            echo "Details: [build_notes.md](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/build_notes.md)"
           } > notes.md
 
       - name: Update rolling edge pre-release
