@@ -261,17 +261,16 @@ host: no gcc/clang/MSYS toolchain, no arm64 execution (Win10 x64, no emulation) 
 - `.gitattributes`: `*.patch -text` (with global autocrlf=true the patch got CRLF in the worktree -> `git apply` failed on every hunk), `*.sh text eol=lf` (fixes the WSL `run_examples.sh` CRLF issue too)
 - when upstream merges a patch: script reports "already present, skipped" after the bump -> delete the file
 
-## open / next
+## open / next (state 2026-10-02 end of day)
 
-- windows-x86_64: report libc++ ANSI_STDIO bug to zig; drop `src/mingw_ldouble_numput.cpp` once fixed upstream. edge release notes: x86_64 known issue resolved after next main push
-- windows-arm64 (parked): printf rounding (not libm) -> ANSI stdio + num_put facet for aarch64-windows too, target byte-identical vs mac-arm64, then recheck z3CellClip/zCellClip
-- decide probe/ldmath: merge (keeps precision.yml + ci/precision/ as reusable probe) or delete
-- CI value check: linux-x86_64 output as reference, fail on int/text diffs (rc-only checks missed the win-x86_64 zero-coords bug)
-- upstream: hand `patches/0001-output-streams-binary-mode.patch` to Kevin; MSVC template fixes could become `patches/0002`, `0003` the same way
-- DONE 2026-10-02: PR #2 windows/x86_64-ldouble merged -> edge rebuilt with x86_64 fixes (branch kept for the windows session)
-- CI value regression: compare against linux-x86_64 output per run (x86_64 platforms should be identical), fail on int/text diffs
+done today: repo + CI + edge release (PR #1), windows-x86_64 fixes (PR #2), precision probe kept for reference (PR #3, `precision.yml` manual / `probe/**` only). all feature branches merged + deleted, windows host session decommissioned (rented dept workstation, nothing permanent there)
 
-- regression oracle = native gcc linux output, not sampleOutput (step 4, not in CI yet)
+next, roughly by priority:
+- CI value check: linux-x86_64 example output as reference per run, x86_64 platforms must be identical, others within tolerance, fail on int/text diffs. rc-only checks missed the win-x86_64 zero-coords bug
+- windows-arm64 (parked): UCRT printf rounding, not libm -> `__USE_MINGW_ANSI_STDIO=1` + `src/mingw_ldouble_numput.cpp` also for aarch64-windows (check mingw pformat with long double == double), target byte-identical vs mac-arm64, then recheck z3CellClip/zCellClip cell counts. verify with precision probe + example outputs, needs a windows-11-arm runner only (CI), no windows host
+- upstream (Kevin): `patches/0001-output-streams-binary-mode.patch`; MSVC template fixes (`::DgDiscTopoRF` in DgDiscTopoRFS.h:313, DgRF.hpp:308) as `patches/0002`, `0003`; long double precision typedef (perf everywhere + aarch64-linux)
+- zig: report libc++ `ostream << long double` on mingw ucrt (ANSI_STDIO not reaching zig-built libc++) -> drop `src/mingw_ldouble_numput.cpp` once fixed
+- first tagged release `v9.0b-...` once value check is in CI?
 - macos gatekeeper / notarisation (cf. CODESIGNING.md in fork)
-- upstream: MSVC fixes (`::DgDiscTopoRF`, DgRF.hpp:308), precision typedef for long double (perf everywhere + aarch64-linux)
-- geoarrow: C API / writer on top of libdglib + libgeoarrow
+- aarch64-linux perf on a real arm runner (VM measured 35-45x vs mac)
+- geoarrow: C API / writer on top of libdglib + libgeoarrow (`prototype/lib-geoarrow-smoke/`), library builds as separate track
