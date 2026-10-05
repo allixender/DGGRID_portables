@@ -284,6 +284,14 @@ goal: build more than the pinned master commit, eg. tag v8.44 + dev branch v91b,
 - watchdog: loops rolling rows, branch `watchdog/<line>-<sha10>`, gitlink bump for master, sha in `upstream.json` for the rest, dispatches `build.yml -f line=<line>`
 - checked locally: actionlint clean, plan output for every event type, `use_line.sh` v91b -> v8.44 -> master with build + examples. not checked: anything on a runner (reusable workflow + matrix, permissions for publish, fetch by sha on the windows runners)
 
+### first CI runs (PR #4, runs 37353115691 PR / 37353189919 dispatch all lines)
+
+- PR run green: plan + master full + v91b/v8.44 build-only, matrix over `line.yml` works, skipped jobs show as skipped
+- dispatch (all lines full): master 10/10, 2 real upstream findings in the other lines, both deterministic (rerun same)
+- v8.44 ubsan: `binpres` rc=132 (trap) on x86_64 linux only, not on mac arm64 / x86_64 rosetta. `SubOpBinPts::initVal` does `new bool[nClasses]` without init -> BIN_POINT_PRESENCE reads indeterminate bools (right by accident on zero pages). fixed upstream in 9.0b (f916ee4, 2026-06-28) -> `patches/v8.44/0002-binpres-init-presence-vector.patch` = backport of that hunk, author Kevin
+- v91b linux-arm64: `FATAL ERROR: DgAuthalic::authalicToGeodeticLatitude: inverse did not converge` in icosaISEAL + wholeEarthIGEO7v2 (34/36), all other platforms ok. new `DgAuthalicConverter.cpp` (7240e1b) iterates to `8 * LDBL_EPSILON`; quad long double there, but musl `log1pl` for 113-bit = `log1p` double ("TODO: broken implementation", zig lib/libc/musl/src/math/log1pl.c:171), `atanhl` goes through it -> q() noise ~1e-16, never converges in 64 iterations
+- -> `patches/v91b/0002-authalic-inverse-tolerance-quad-long-double.patch`: `8 * DBL_EPSILON` when `numeric_limits<long double>::digits > 64`, double + x87 unchanged. workaround for the musl builds, for Kevin rather a stall criterion (glibc has real quad log1pl) -> tell him, v91b is in flux
+
 ## open / next (state 2026-10-02 end of day)
 
 done today: repo + CI + edge release (PR #1), windows-x86_64 fixes (PR #2), precision probe kept for reference (PR #3, `precision.yml` manual / `probe/**` only). all feature branches merged + deleted, windows host session decommissioned (rented dept workstation, nothing permanent there)
