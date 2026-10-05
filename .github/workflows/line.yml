@@ -259,5 +259,7 @@ jobs:
         if: inputs.publish == 'fixed'
         run: |
           pre=""; [ "$PRERELEASE" = true ] && pre="--prerelease"
-          gh release create "$RELEASE" dist/* --verify-tag $pre \
+          # never "Latest" automatically: a legacy line (v8.44) must not show up as the
+          # newest release on the repo page. Set it by hand (gh release edit --latest).
+          gh release create "$RELEASE" dist/* --verify-tag $pre --latest=false \
             --title "DGGRID ${DGGRID_VERSION} portable (${RELEASE})" --notes-file notes.md
