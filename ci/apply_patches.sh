@@ -9,8 +9,9 @@
 # Prints one line per patch; with GITHUB_STEP_SUMMARY set also a md list.
 #
 #   apply_patches.sh                          patches/*.patch -> DGGRID submodule
-#   apply_patches.sh <src-dir> <patch-dir>... patch dirs in order -> <src-dir>, e.g. the
-#                                             prototype's plain source copy (no git repo)
+#   apply_patches.sh <src-dir> <patch-dir>... patch dirs in order -> <src-dir>, e.g. another
+#                                             upstream line (patches/v91b, see upstream.json)
+#                                             or the prototype's plain source copy (no git repo)
 set -euo pipefail
 shopt -s nullglob
 
@@ -25,7 +26,11 @@ summary=${GITHUB_STEP_SUMMARY:-/dev/null}
 export GIT_CEILING_DIRECTORIES="$(dirname "$sub")"
 
 patches=()
-for d in "${dirs[@]}"; do patches+=("$d"/*.patch); done
+for d in "${dirs[@]}"; do
+  [ -d "$d" ] || { echo "::error::patch dir $d not found"; exit 1; }
+  # absolute, git apply runs with -C "$sub"
+  patches+=("$(cd "$d" && pwd)"/*.patch)
+done
 [ ${#patches[@]} -eq 0 ] && { echo "no patches"; exit 0; }
 
 echo "### DGGRID patches" >> "$summary"

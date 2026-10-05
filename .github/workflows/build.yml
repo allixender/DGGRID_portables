@@ -1,7 +1,10 @@
-# Build all portable DGGRID binaries on one Linux runner (zig cross-compile), test them
-# on native runners, and publish:
-#   push to main  -> rolling pre-release `edge` (stable asset URLs, replaced on each push)
-#   tag v*        -> release (pre-release if the tag contains a '-', e.g. v9.0b-1-rc1)
+# Entry point: pick the upstream lines (rows of upstream.json) this event builds and run
+# the build/test/publish pipeline (line.yml) once per line. ci/plan_lines.sh decides:
+#   pull request       -> default line full, other lines build-only
+#   push to main       -> rolling lines full + rolling pre-release (edge, edge-v91b, ...),
+#                         fixed lines build-only
+#   tag vX[-rN]        -> the fixed line with release vX, full + release <tag>
+#   workflow_dispatch  -> full, no publish; input `line` limits it to one line (watchdog)
 name: build
 
 on:
@@ -12,230 +15,45 @@ on:
   pull_request:
     paths-ignore: ['**.md', 'prototype/**']
   workflow_dispatch:
-
-env:
-  ZIG_VERSION: 0.16.0
+    inputs:
+      line:
+        description: 'only this line from upstream.json (empty: all lines)'
+        default: ''
 
 concurrency:
-  group: build-${{ github.ref }}
+  group: build-${{ github.ref }}-${{ inputs.line }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+permissions:
+  contents: read
+
 jobs:
-  build:
+  plan:
     runs-on: ubuntu-24.04
     outputs:
-      dggrid_version: ${{ steps.meta.outputs.dggrid_version }}
-      dggrid_commit: ${{ steps.meta.outputs.dggrid_commit }}
-      patches: ${{ steps.meta.outputs.patches }}
+      lines: ${{ steps.plan.outputs.lines }}
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: true
-
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: ${{ env.ZIG_VERSION }}
-
-      - name: Apply DGGRID patches (patches/*.patch)
-        run: ci/apply_patches.sh
-
-      - name: Build release targets
-        run: zig build release --summary new
-
-      - name: Collect metadata
-        id: meta
-        run: |
-          ver=$(sed -n 's/^#define DGGRID_VERSION *"\(.*\)"/\1/p' DGGRID/src/lib/dglib/include/dglib/DgBase.h)
-          echo "dggrid_version=$ver" >> "$GITHUB_OUTPUT"
-          echo "dggrid_commit=$(git -C DGGRID rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          # publish has no checkout, so hand it the applied patch list
-          echo "patches=$(cd patches 2>/dev/null && ls -- *.patch 2>/dev/null | paste -sd' ' -)" >> "$GITHUB_OUTPUT"
-
-      - name: Universal macOS binary
-        run: |
-          lipo=$(command -v llvm-lipo || ls /usr/bin/llvm-lipo-* /usr/lib/llvm-*/bin/llvm-lipo 2>/dev/null | sort -V | tail -1)
-          if [ -z "$lipo" ]; then echo "::warning::llvm-lipo not found, skipping macos-universal"; exit 0; fi
-          mkdir -p zig-out/release/macos-universal
-          "$lipo" -create zig-out/release/macos-x86_64/dggrid zig-out/release/macos-arm64/dggrid \
-            -output zig-out/release/macos-universal/dggrid
-          "$lipo" -info zig-out/release/macos-universal/dggrid
-
-      - name: Package
+      - id: plan
         env:
-          DGGRID_VERSION: ${{ steps.meta.outputs.dggrid_version }}
-          DGGRID_COMMIT: ${{ steps.meta.outputs.dggrid_commit }}
-        run: |
-          mkdir -p dist
-          for dir in zig-out/release/*/; do
-            platform=$(basename "$dir")
-            name="dggrid-${DGGRID_VERSION}-${platform}"
-            stage="stage/$name"
-            mkdir -p "$stage"
-            cp "$dir"/dggrid* "$stage"/
-            cp LICENSE "$stage"/
-            {
-              echo "DGGRID ${DGGRID_VERSION}, GDAL-free portable build"
-              echo "platform:        ${platform}"
-              echo "upstream commit: https://github.com/sahrk/DGGRID/commit/${DGGRID_COMMIT}"
-              echo "built from:      ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
-              echo "zig:             ${ZIG_VERSION}"
-              for pf in patches/*.patch; do echo "patch:           $(basename "$pf")"; done
-              echo "license:         AGPL-3.0 (see LICENSE)"
-            } > "$stage/BUILDINFO.txt"
-            # asset names without version -> stable URLs, e.g. releases/download/edge/dggrid-linux-x86_64.tar.gz
-            case "$platform" in
-              windows-*) (cd stage && zip -qr "../dist/dggrid-${platform}.zip" "$name") ;;
-              *)         tar -C stage -czf "dist/dggrid-${platform}.tar.gz" "$name" ;;
-            esac
-          done
-          (cd dist && sha256sum * > SHA256SUMS)
-          cat dist/SHA256SUMS
+          ONLY: ${{ inputs.line }}
+        run: ci/plan_lines.sh >> "$GITHUB_OUTPUT"
 
-      - uses: actions/upload-artifact@v7
-        with:
-          name: dist
-          path: dist/
-          if-no-files-found: error
-
-  ubsan:
-    # UB sanitizer in trap mode: any UB on the examples' code paths aborts the run
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          submodules: true
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: ${{ env.ZIG_VERSION }}
-      - run: ci/apply_patches.sh
-      - run: zig build -Doptimize=ReleaseSafe -Dubsan=true
-      - run: ci/run_examples.sh zig-out/bin/dggrid "$RUNNER_TEMP/examples"
-
-  test:
-    needs: build
+  line:
+    needs: plan
+    name: ${{ matrix.l.line }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { runner: ubuntu-24.04,     platform: linux-x86_64 }
-          - { runner: ubuntu-24.04-arm, platform: linux-arm64 }
-          - { runner: macos-15,         platform: macos-arm64 }
-          - { runner: macos-15,         platform: macos-universal }
-          - { runner: macos-15-intel,   platform: macos-x86_64 }
-          - { runner: macos-15-intel,   platform: macos-universal }
-          - { runner: windows-2025,     platform: windows-x86_64 }
-          - { runner: windows-11-arm,   platform: windows-arm64 }
-    runs-on: ${{ matrix.runner }}
-    name: test (${{ matrix.platform }} on ${{ matrix.runner }})
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Keep LF line endings in example inputs
-        if: runner.os == 'Windows'
-        run: git config --global core.autocrlf false
-
-      - uses: actions/checkout@v7
-      - name: Checkout DGGRID submodule (examples)
-        run: git submodule update --init --depth 1 DGGRID
-
-      - uses: actions/download-artifact@v8
-        with:
-          name: dist
-          path: dist
-
-      - name: Unpack release archive
-        run: |
-          mkdir -p unpacked
-          if [ -f "dist/dggrid-${{ matrix.platform }}.zip" ]; then
-            pwsh -NoProfile -Command "Expand-Archive -Path dist/dggrid-${{ matrix.platform }}.zip -DestinationPath unpacked"
-          else
-            tar -C unpacked -xzf "dist/dggrid-${{ matrix.platform }}.tar.gz"
-          fi
-          exe=""
-          for f in unpacked/*/dggrid.exe unpacked/*/dggrid; do
-            if [ -f "$f" ]; then exe=$f; break; fi
-          done
-          [ -n "$exe" ] || { echo "::error::no dggrid binary in archive"; exit 1; }
-          echo "EXE=$exe" >> "$GITHUB_ENV"
-          cat unpacked/*/BUILDINFO.txt
-          "$exe" -v > version.txt 2>&1 || true
-          head -2 version.txt
-
-      - name: Run examples
-        run: ci/run_examples.sh "$EXE" "$RUNNER_TEMP/examples"
-
-      - name: Compare outputs with upstream sampleOutput (informational)
-        if: always()
-        continue-on-error: true
-        run: |
-          py=python3; [ "$RUNNER_OS" = Windows ] && py=python
-          $py ci/compare_outputs.py "$RUNNER_TEMP/examples"
-
-      - name: Upload example outputs
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: outputs-${{ matrix.platform }}-${{ matrix.runner }}
-          path: ${{ runner.temp }}/examples/*/outputfiles/
-          retention-days: 14
-
-  publish:
-    needs: [build, test, ubsan]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-    runs-on: ubuntu-24.04
+        l: ${{ fromJSON(needs.plan.outputs.lines) }}
     permissions:
-      contents: write
-    concurrency:
-      group: publish
-      cancel-in-progress: false
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-      DGGRID_VERSION: ${{ needs.build.outputs.dggrid_version }}
-      DGGRID_COMMIT: ${{ needs.build.outputs.dggrid_commit }}
-      PATCHES: ${{ needs.build.outputs.patches }}
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: dist
-          path: dist
-
-      - name: Release notes
-        run: |
-          {
-            echo "GDAL-free portable DGGRID ${DGGRID_VERSION} binaries, cross-compiled with Zig ${ZIG_VERSION}."
-            echo
-            echo "- upstream: sahrk/DGGRID@${DGGRID_COMMIT:0:10}"
-            echo "- built from: ${GITHUB_SHA:0:10}"
-            if [ -n "$PATCHES" ]; then
-              echo "- patches on top of upstream: $(for pf in $PATCHES; do printf '`%s` ' "$pf"; done)([patches/](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/tree/${GITHUB_SHA}/patches))"
-            else
-              echo "- patches on top of upstream: none"
-            fi
-            echo
-            echo "| platform | asset |"
-            echo "|---|---|"
-            for f in dist/dggrid-*; do echo "| ${f#dist/dggrid-} | \`$(basename "$f")\` |"; done
-            echo
-            echo "Checksums in \`SHA256SUMS\`. macOS: downloaded binaries are not notarised, run \`xattr -d com.apple.quarantine dggrid\` once."
-            echo
-            echo "**Known issues (Windows):**"
-            echo "- arm64: coordinates can differ by up to ~1e-5 degrees from other platforms; clipped grids may include slightly different boundary cells (under investigation)."
-            echo
-            echo "Details: [build_notes.md](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/build_notes.md)"
-          } > notes.md
-
-      - name: Update rolling edge pre-release
-        if: github.ref == 'refs/heads/main'
-        run: |
-          gh release delete edge --cleanup-tag --yes || true
-          gh release create edge dist/* --prerelease --target "$GITHUB_SHA" \
-            --title "edge: DGGRID ${DGGRID_VERSION} @ ${DGGRID_COMMIT:0:7}" --notes-file notes.md
-
-      - name: Tagged release
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          pre=""; [[ "$GITHUB_REF_NAME" == *-* ]] && pre="--prerelease"
-          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag $pre \
-            --title "DGGRID ${DGGRID_VERSION} portable (${GITHUB_REF_NAME})" --notes-file notes.md
+      contents: write   # for the publish job in line.yml
+    uses: ./.github/workflows/line.yml
+    with:
+      line: ${{ matrix.l.line }}
+      sha: ${{ matrix.l.sha }}
+      patches: ${{ matrix.l.patches }}
+      release: ${{ matrix.l.release }}
+      prerelease: ${{ matrix.l.prerelease }}
+      tests: ${{ matrix.l.tests }}
+      publish: ${{ matrix.l.publish }}

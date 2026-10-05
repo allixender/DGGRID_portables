@@ -1,0 +1,53 @@
+From 3e88d130ba173ea569bd6ef15463d7d619942a4c Mon Sep 17 00:00:00 2001
+From: allixender <alexander.kmoch@ut.ee>
+Date: Mon, 5 Oct 2026 21:23:00 +0300
+Subject: [PATCH] DgAuthalic: double tolerance for the inverse on quad long
+ double
+
+authalicToGeodeticLatitude() iterates until the residual is below
+8 * LDBL_EPSILON. On aarch64 linux long double is IEEE quad (epsilon
+1.9e-34), but musl's log1pl() for 113-bit long double is log1p() in
+double precision ("TODO: broken implementation to make things compile"),
+and atanhl() goes through log1pl(). q() and polarAreaDeficit() therefore
+carry ~1e-16 relative noise, neither stopping rule can be met within the
+64 iterations and DGGRID stops with
+
+  FATAL ERROR: DgAuthalic::authalicToGeodeticLatitude: inverse did not converge
+
+(examples icosaISEAL and wholeEarthIGEO7v2, static musl build on
+ubuntu-24.04-arm). Use 8 * DBL_EPSILON when long double has more than 64
+mantissa bits. double and x87 long double builds are unchanged.
+
+This is the workaround for the musl builds. For upstream a stall
+criterion (accept the iterate once the bracket stops shrinking) would
+keep the full precision on a libm with real quad log1pl (glibc).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/lib/dglib/lib/DgAuthalicConverter.cpp | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/src/lib/dglib/lib/DgAuthalicConverter.cpp b/src/lib/dglib/lib/DgAuthalicConverter.cpp
+index 103e068..1806143 100644
+--- a/src/lib/dglib/lib/DgAuthalicConverter.cpp
++++ b/src/lib/dglib/lib/DgAuthalicConverter.cpp
+@@ -135,8 +135,14 @@ long double DgAuthalic::authalicToGeodeticLatitude(long double beta)
+    long double low = 0.0L;
+    long double high = halfPi;
+    long double t = usePolarComplement ? halfPi - absBeta : absBeta;
+-   const long double tolerance =
+-      8.0L * std::numeric_limits<long double>::epsilon();
++   // A long double wider than x87 extended (IEEE quad, aarch64 linux) is not
++   // matched by every libm: musl evaluates log1pl(), and atanhl() through it,
++   // in double precision there. q() then cannot resolve 8 * LDBL_EPSILON and
++   // the solve would never converge, so fall back to the double tolerance.
++   const long double tolerance = 8.0L *
++      (std::numeric_limits<long double>::digits > 64
++          ? (long double) std::numeric_limits<double>::epsilon()
++          : std::numeric_limits<long double>::epsilon());
+    bool converged = false;
+ 
+    // Both q(phi) and the polar area deficit are monotone. Keep Newton's
+-- 
+2.52.0
+

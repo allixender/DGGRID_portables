@@ -1,0 +1,36 @@
+From 300f3551d396c3c8158c6e7f4d3c2145b5ce863f Mon Sep 17 00:00:00 2001
+From: Kevin Sahr <sahrk@sou.edu>
+Date: Sun, 28 Jun 2026 07:04:23 +0000
+Subject: [PATCH] binpres: initialise the presence vector (backport from 9.0b)
+
+Backport of the SubOpBinPts.cpp hunk of sahrk/DGGRID@f916ee4 ("fixes",
+2026-06-28) to 8.44. SubOpBinPts::initVal() allocated presVec with
+new bool[nClasses] and left it uninitialised, so BIN_POINT_PRESENCE read
+indeterminate bools for every class without a point in the cell. With
+freshly mapped (zero) heap pages the output is right by accident; UBSan
+traps on it in the binpres example (x86_64 linux, load of invalid bool).
+---
+ src/apps/dggrid/SubOpBinPts.cpp | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/src/apps/dggrid/SubOpBinPts.cpp b/src/apps/dggrid/SubOpBinPts.cpp
+index 4a3c450..e4eca22 100644
+--- a/src/apps/dggrid/SubOpBinPts.cpp
++++ b/src/apps/dggrid/SubOpBinPts.cpp
+@@ -418,9 +418,11 @@ SubOpBinPts::initVal (Val& val, bool allocPresVec) const {
+    val.mean = 0.0;
+ 
+    int nClasses = (int) op.inOp.inputFiles.size();
+-   if (allocPresVec)
++   if (allocPresVec) {
+       val.presVec = new bool[nClasses];
+-   else
++      for (int i = 0; i < nClasses; i++)
++         val.presVec[i] = false;
++   } else
+       val.presVec = nullptr;
+ 
+ } // void SubOpBinPts::initVal
+-- 
+2.52.0
+
