@@ -1,0 +1,84 @@
+From 6a9f307a25ca18067e7b817dcc93aaeab1e6f011 Mon Sep 17 00:00:00 2001
+From: allixender <alexander.kmoch@ut.ee>
+Date: Fri, 2 Oct 2026 18:18:07 +0300
+Subject: [PATCH] Write output files in binary mode (fixes invalid GeoJSON on
+ Windows)
+
+DgOutGeoJSONFile::postamble() drops the trailing ",\n" of the last
+feature with seekp(tellp() - 2). Output streams were opened in text mode,
+so on Windows the "\n" is written as "\r\n" and the seek lands one byte
+short: the comma stays and the file ends in "}},]}" (invalid JSON).
+
+Open all DGGRID output files with std::ios::binary (DgOutputStream, the
+shapefile .prj, TEXT data output, multi-grid meta file). Besides fixing the
+GeoJSON this makes every output LF-only and byte-identical across
+platforms. Input streams are unchanged (text mode still accepts CRLF
+metafiles on Windows).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/apps/dggrid/SubOpBasicMulti.cpp  | 3 ++-
+ src/apps/dggrid/SubOpOut.cpp         | 2 +-
+ src/lib/dglib/lib/DgOutShapefile.cpp | 2 +-
+ src/lib/dglib/lib/DgOutputStream.cpp | 5 ++++-
+ 4 files changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/src/apps/dggrid/SubOpBasicMulti.cpp b/src/apps/dggrid/SubOpBasicMulti.cpp
+index 05d6965..e4664de 100644
+--- a/src/apps/dggrid/SubOpBasicMulti.cpp
++++ b/src/apps/dggrid/SubOpBasicMulti.cpp
+@@ -204,7 +204,8 @@ SubOpBasicMulti::execute (bool force) {
+ 
+       if (op.dggOp.numGrids > 1 || op.dggOp.placeRandom) {
+          std::ofstream metaOutFile;
+-         metaOutFile.open(op.outOp.metaOutFileName.c_str());
++         metaOutFile.open(op.outOp.metaOutFileName.c_str(),
++                          std::ios::out | std::ios::binary);
+          pList().writeMetafile(metaOutFile);
+          metaOutFile.close();
+       }
+diff --git a/src/apps/dggrid/SubOpOut.cpp b/src/apps/dggrid/SubOpOut.cpp
+index 4c164d9..60d73a0 100644
+--- a/src/apps/dggrid/SubOpOut.cpp
++++ b/src/apps/dggrid/SubOpOut.cpp
+@@ -952,7 +952,7 @@ SubOpOut::executeOp (void) {
+ 
+    if (dataOutType == "TEXT") {
+       dataOut = new std::ofstream();
+-      dataOut->open(dataOutFileName.c_str());
++      dataOut->open(dataOutFileName.c_str(), std::ios::out | std::ios::binary);
+       dataOut->setf(std::ios::fixed, std::ios::floatfield);
+       dataOut->precision(op.mainOp.precision);
+    }
+diff --git a/src/lib/dglib/lib/DgOutShapefile.cpp b/src/lib/dglib/lib/DgOutShapefile.cpp
+index 04d9932..ae2feb3 100644
+--- a/src/lib/dglib/lib/DgOutShapefile.cpp
++++ b/src/lib/dglib/lib/DgOutShapefile.cpp
+@@ -107,7 +107,7 @@ DgOutShapefile::open (const std::string& fileName, DgReportLevel failLevel)
+    // create the projection file
+    std::string prjFileName = fileName + ".prj";
+    std::ofstream prjFile;
+-   prjFile.open(prjFileName.c_str(), std::ios::out);
++   prjFile.open(prjFileName.c_str(), std::ios::out | std::ios::binary);
+    if (!prjFile.good())
+       report("DgOutShapefile::open() unable to open file " + prjFileName,
+              failLevel);
+diff --git a/src/lib/dglib/lib/DgOutputStream.cpp b/src/lib/dglib/lib/DgOutputStream.cpp
+index 7e502f9..6739e7f 100644
+--- a/src/lib/dglib/lib/DgOutputStream.cpp
++++ b/src/lib/dglib/lib/DgOutputStream.cpp
+@@ -62,7 +62,10 @@ DgOutputStream::open (std::string fileName, DgReportLevel failLevel)
+       = (suffix() == std::string("")) ? fileName :
+                                      fileName + std::string(".") + suffix();
+ 
+-    std::ofstream::open(fileName_.c_str(), std::ios::out);
++    // binary: no CRLF translation on Windows. Keeps the output files
++    // byte-identical across platforms, and DgOutGeoJSONFile::postamble()
++    // relies on the trailing ",\n" being exactly 2 bytes when it seeks back.
++    std::ofstream::open(fileName_.c_str(), std::ios::out | std::ios::binary);
+    if (!good())
+    {
+       report("DgOutputStream::open() unable to open file " + fileName_,
+-- 
+2.52.0
+

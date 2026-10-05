@@ -1,5 +1,7 @@
-# Watchdog: when sahrk/DGGRID master moves past the pinned submodule commit, open a PR
-# that bumps the submodule and run the build/test workflow on it.
+# Watchdog: for every rolling line in upstream.json, when its sahrk/DGGRID branch moves
+# past the pinned commit, open a PR that bumps the pin and run the build/test workflow
+# on it. The pin is the submodule gitlink for the default line ("sha": null) and the
+# "sha" in upstream.json for the others.
 #
 # PRs and pushes made with GITHUB_TOKEN do not trigger other workflows, so build.yml is
 # started explicitly via workflow_dispatch on the bump branch (its checks show on the PR).
@@ -26,55 +28,66 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Compare pinned and upstream commit
-        id: cmp
-        run: |
-          pinned=$(git ls-tree HEAD DGGRID | awk '{print $3}')
-          upstream=$(git ls-remote "$UPSTREAM" refs/heads/master | cut -f1)
-          echo "pinned=$pinned upstream=$upstream"
-          echo "pinned=$pinned" >> "$GITHUB_OUTPUT"
-          echo "upstream=$upstream" >> "$GITHUB_OUTPUT"
-          echo "branch=watchdog/dggrid-${upstream:0:10}" >> "$GITHUB_OUTPUT"
-          if [ "$pinned" = "$upstream" ]; then
-            echo "up to date" >> "$GITHUB_STEP_SUMMARY"
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          elif git ls-remote --exit-code origin "refs/heads/watchdog/dggrid-${upstream:0:10}" >/dev/null; then
-            echo "bump branch for ${upstream:0:10} already exists" >> "$GITHUB_STEP_SUMMARY"
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Bump submodule and open PR
-        if: steps.cmp.outputs.changed == 'true'
-        env:
-          PINNED: ${{ steps.cmp.outputs.pinned }}
-          UPSTREAM_SHA: ${{ steps.cmp.outputs.upstream }}
-          BRANCH: ${{ steps.cmp.outputs.branch }}
+      - name: Bump rolling lines that moved upstream
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git submodule update --init DGGRID
-          git -C DGGRID fetch origin master
-          git -C DGGRID checkout --quiet "$UPSTREAM_SHA"
-          ver=$(sed -n 's/^#define DGGRID_VERSION *"\(.*\)"/\1/p' DGGRID/src/lib/dglib/include/dglib/DgBase.h)
+          gitlink=$(git ls-tree HEAD DGGRID | awk '{print $3}')
 
-          git switch -c "$BRANCH"
-          git add DGGRID
-          git commit -m "bump DGGRID to sahrk/DGGRID@${UPSTREAM_SHA:0:10} (${ver})"
-          git push origin "$BRANCH"
+          bump() {
+            local line=$1 ref=$2 pinned=$3 in_json=true upstream branch ver
+            if [ "$pinned" = gitlink ]; then pinned=$gitlink; in_json=false; fi
+            upstream=$(git ls-remote "$UPSTREAM" "refs/heads/$ref" | cut -f1)
+            [ -n "$upstream" ] || { echo "::error::$line: no branch $ref in $UPSTREAM"; return 1; }
+            branch="watchdog/$line-${upstream:0:10}"
+            echo "$line: pinned=$pinned upstream=$upstream"
+            if [ "$pinned" = "$upstream" ]; then
+              echo "- \`$line\`: up to date (\`${pinned:0:10}\`)" >> "$GITHUB_STEP_SUMMARY"
+              return 0
+            elif git ls-remote --exit-code origin "refs/heads/$branch" >/dev/null; then
+              echo "- \`$line\`: bump branch for \`${upstream:0:10}\` already exists" >> "$GITHUB_STEP_SUMMARY"
+              return 0
+            fi
 
-          {
-            echo "sahrk/DGGRID master moved: \`${PINNED:0:10}\` -> \`${UPSTREAM_SHA:0:10}\` (DGGRID_VERSION ${ver})"
-            echo
-            echo "Compare: https://github.com/sahrk/DGGRID/compare/${PINNED}...${UPSTREAM_SHA}"
-            echo
-            echo "Upstream commits:"
-            git -C DGGRID log --format='- %h %s (%an)' "${PINNED}..${UPSTREAM_SHA}" | head -50
-            echo
-            echo "Build/test runs via workflow_dispatch on this branch, see the checks below."
-          } > body.md
-          gh pr create --base main --head "$BRANCH" \
-            --title "bump DGGRID to ${UPSTREAM_SHA:0:10} (${ver})" --body-file body.md
+            git -C DGGRID fetch --quiet origin "$ref" || return 1
+            ver=$(git -C DGGRID show "$upstream:src/lib/dglib/include/dglib/DgBase.h" |
+              sed -n 's/^#define DGGRID_VERSION *"\(.*\)"/\1/p')
 
-          gh workflow run build.yml --ref "$BRANCH"
+            git switch --quiet -C "$branch" "$GITHUB_SHA" || return 1
+            if $in_json; then
+              # upstream.json has one row per text line
+              sed -i "/\"line\": *\"$line\"/s/$pinned/$upstream/" upstream.json
+              [ "$(jq -r --arg l "$line" '.[] | select(.line == $l) | .sha' upstream.json)" = "$upstream" ] ||
+                { echo "::error::$line: could not update sha in upstream.json"; return 1; }
+              git add upstream.json
+            else
+              git -C DGGRID checkout --quiet "$upstream" || return 1
+              git add DGGRID
+            fi
+            git commit --quiet -m "bump DGGRID $line to sahrk/DGGRID@${upstream:0:10} (${ver})" || return 1
+            git push --quiet origin "$branch" || return 1
+
+            {
+              echo "sahrk/DGGRID \`$ref\` moved: \`${pinned:0:10}\` -> \`${upstream:0:10}\` (DGGRID_VERSION ${ver})"
+              echo
+              echo "Compare: https://github.com/sahrk/DGGRID/compare/${pinned}...${upstream}"
+              echo
+              echo "Upstream commits:"
+              git -C DGGRID log --format='- %h %s (%an)' "${pinned}..${upstream}" | head -50
+              echo
+              echo "Build/test for line \`$line\` runs via workflow_dispatch on this branch, see the checks below."
+            } > "$RUNNER_TEMP/body.md"
+            gh pr create --base main --head "$branch" \
+              --title "bump DGGRID $line to ${upstream:0:10} (${ver})" --body-file "$RUNNER_TEMP/body.md" || return 1
+
+            gh workflow run build.yml --ref "$branch" -f line="$line" || return 1
+            echo "- \`$line\`: opened bump PR for \`${upstream:0:10}\` (${ver})" >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          failed=0
+          # fd 3: git/gh inside bump must not eat the remaining rows from stdin
+          while IFS=$'\t' read -r line ref pinned <&3; do
+            bump "$line" "$ref" "$pinned" || { echo "::error::watchdog failed for line $line"; failed=1; }
+          done 3< <(jq -r '.[] | select(.rolling) | [.line, .ref, .sha // "gitlink"] | @tsv' upstream.json)
+          exit $failed
