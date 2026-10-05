@@ -292,6 +292,10 @@ goal: build more than the pinned master commit, eg. tag v8.44 + dev branch v91b,
 - v91b linux-arm64: `FATAL ERROR: DgAuthalic::authalicToGeodeticLatitude: inverse did not converge` in icosaISEAL + wholeEarthIGEO7v2 (34/36), all other platforms ok. new `DgAuthalicConverter.cpp` (7240e1b) iterates to `8 * LDBL_EPSILON`; quad long double there, but musl `log1pl` for 113-bit = `log1p` double ("TODO: broken implementation", zig lib/libc/musl/src/math/log1pl.c:171), `atanhl` goes through it -> q() noise ~1e-16, never converges in 64 iterations
 - -> `patches/v91b/0002-authalic-inverse-tolerance-quad-long-double.patch`: `8 * DBL_EPSILON` when `numeric_limits<long double>::digits > 64`, double + x87 unchanged. workaround for the musl builds, for Kevin rather a stall criterion (glibc has real quad log1pl) -> tell him, v91b is in flux
 
+- after both patches (runs 37355652265 line v91b, 37355656814 line v8.44, dispatch `-f line=`): 11/11 green each, PR run 37355657404 green (13 pass, 7 skipped)
+- v91b linux-arm64 with 0002 vs linux-x86_64 (artifacts `outputs-v91b-*`): icosaISEAL, wholeEarthIGEO7v2 kml same structure, differing numbers only beyond double precision (parse to the same double), same order as mac-arm64 vs linux-x86_64
+- cosmetic: a skipped matrix job shows as `test (${{ matrix.platform }} on ${{ matrix.runner }})` in the checks list (GitHub doesn't expand the name of a skipped matrix)
+
 ## open / next (state 2026-10-02 end of day)
 
 done today: repo + CI + edge release (PR #1), windows-x86_64 fixes (PR #2), precision probe kept for reference (PR #3, `precision.yml` manual / `probe/**` only). all feature branches merged + deleted, windows host session decommissioned (rented dept workstation, nothing permanent there)
@@ -301,7 +305,7 @@ next, roughly by priority:
 - windows-arm64 (parked): UCRT printf rounding, not libm -> `__USE_MINGW_ANSI_STDIO=1` + `src/mingw_ldouble_numput.cpp` also for aarch64-windows (check mingw pformat with long double == double), target byte-identical vs mac-arm64, then recheck z3CellClip/zCellClip cell counts. verify with precision probe + example outputs, needs a windows-11-arm runner only (CI), no windows host
 - upstream (Kevin): `patches/0001-output-streams-binary-mode.patch`; MSVC template fixes (`::DgDiscTopoRF` in DgDiscTopoRFS.h:313, DgRF.hpp:308) as `patches/0002`, `0003`; long double precision typedef (perf everywhere + aarch64-linux)
 - zig: report libc++ `ostream << long double` on mingw ucrt (ANSI_STDIO not reaching zig-built libc++) -> drop `src/mingw_ldouble_numput.cpp` once fixed
-- upstream lines (2026-10-05 section): push `ci/upstream-lines` + PR, watch the first run (12 jobs + plan on a PR), after merge check `edge-v91b`, then tag `v8.44` here for the first fixed release. lines tracked for now: legacy v8.44, master, dev v91b (no `v9.03b` line, decision 2026-10-05)
+- upstream lines (2026-10-05 section): PR #4 green, not merged yet. after merge check `edge` + `edge-v91b`, then tag `v8.44` here for the first fixed release. Kevin: v91b authalic inverse on quad long double (`patches/v91b/0002`). lines tracked for now: legacy v8.44, master, dev v91b (no `v9.03b` line, decision 2026-10-05)
 - CLAUDE.md lives on proto/lib-dgreal only -> add the lines paragraph there after merge (build.yml/line.yml split, `use_line.sh`, artifact names)
 - first tagged release `v9.0b-...` once value check is in CI? more lines = more binaries checked by rc only until then
 - macos gatekeeper / notarisation (cf. CODESIGNING.md in fork)
