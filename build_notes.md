@@ -297,6 +297,14 @@ goal: build more than the pinned master commit, eg. tag v8.44 + dev branch v91b,
 - v91b linux-arm64 with 0002 vs linux-x86_64 (artifacts `outputs-v91b-*`): icosaISEAL, wholeEarthIGEO7v2 kml same structure, differing numbers only beyond double precision (parse to the same double), same order as mac-arm64 vs linux-x86_64
 - cosmetic: a skipped matrix job shows as `test (${{ matrix.platform }} on ${{ matrix.runner }})` in the checks list (GitHub doesn't expand the name of a skipped matrix)
 
+### first fixed release `v8.44` (tag on d1386aa, run 37362682873)
+
+- PR #5: tagged-release step with `--latest=false`. tag `v8.44` pushed -> plan picks only the v8.44 line, build + ubsan + 8 tests green, release published 2026-10-05 22:01 UTC: 7 archives + `SHA256SUMS` ok, mac universal runs ("8.44"), BUILDINFO lists `patches/v8.44/0001` + `0002`, stable URL ok
+- github actions incident ca 19:15-22:00 UTC: jobs cancelled with "The job was not acquired by Runner of type hosted even after multiple attempts" (2 tests, then the publish job twice; on the main run `v91b / build` + 1 test). not ours -> `gh run rerun <id> --failed` reruns only those + dependents, keeps the tag event, publish worked on the 3rd try
+- main run 37362670453 rerun the same way -> green, `edge` + `edge-v91b` rebuilt from d1386aa
+- `--latest=false` does NOT keep v8.44 off "Latest": it's the only non-prerelease here, GitHub falls back to it (`releases/latest` = v8.44, `gh release edit v8.44 --latest=false` no effect). flag only matters once a newer full release exists (a `v8.44-rN` then doesn't take Latest). if it bothers: `"prerelease": true` in the v8.44 row, or a first fixed 9.x release. comment in `line.yml` says "never Latest", too strong
+- proto/lib-dgreal (local only): main merged in, 1 conflict `ci/apply_patches.sh` -> main's version (superset), `prototype/lib/setup_src.sh` runs. CLAUDE.md there has the lines paragraph now
+
 ## open / next (state 2026-10-02 end of day)
 
 done today: repo + CI + edge release (PR #1), windows-x86_64 fixes (PR #2), precision probe kept for reference (PR #3, `precision.yml` manual / `probe/**` only). all feature branches merged + deleted, windows host session decommissioned (rented dept workstation, nothing permanent there)
@@ -306,7 +314,7 @@ next, roughly by priority:
 - windows-arm64 (parked): UCRT printf rounding, not libm -> `__USE_MINGW_ANSI_STDIO=1` + `src/mingw_ldouble_numput.cpp` also for aarch64-windows (check mingw pformat with long double == double), target byte-identical vs mac-arm64, then recheck z3CellClip/zCellClip cell counts. verify with precision probe + example outputs, needs a windows-11-arm runner only (CI), no windows host
 - upstream (Kevin): `patches/0001-output-streams-binary-mode.patch`; MSVC template fixes (`::DgDiscTopoRF` in DgDiscTopoRFS.h:313, DgRF.hpp:308) as `patches/0002`, `0003`; long double precision typedef (perf everywhere + aarch64-linux)
 - zig: report libc++ `ostream << long double` on mingw ucrt (ANSI_STDIO not reaching zig-built libc++) -> drop `src/mingw_ldouble_numput.cpp` once fixed
-- upstream lines (2026-10-05 section): PR #4 merged (39ac3a0), push run 37358655320 green (24 ok, v8.44 build-only), `edge` (9.0b @ 688940b) + `edge-v91b` (9.1b @ f677e39) published, checksums + mac universal binaries checked. next: tag `v8.44` here for the first fixed release. Kevin: v91b authalic inverse on quad long double (`patches/v91b/0002`). lines tracked for now: legacy v8.44, master, dev v91b (no `v9.03b` line, decision 2026-10-05)
+- upstream lines (2026-10-05 section): PR #4 merged (39ac3a0), push run 37358655320 green (24 ok, v8.44 build-only), `edge` (9.0b @ 688940b) + `edge-v91b` (9.1b @ f677e39) published, checksums + mac universal binaries checked. `v8.44` released 2026-10-05 (see section above). next: first watchdog run with the line loop (daily 05:17 UTC or dispatch), v8.44 shown as "Latest" ok? Kevin: v91b authalic inverse on quad long double (`patches/v91b/0002`). lines tracked for now: legacy v8.44, master, dev v91b (no `v9.03b` line, decision 2026-10-05)
 - CLAUDE.md lives on proto/lib-dgreal only -> add the lines paragraph there after merge (build.yml/line.yml split, `use_line.sh`, artifact names)
 - first tagged release `v9.0b-...` once value check is in CI? more lines = more binaries checked by rc only until then
 - macos gatekeeper / notarisation (cf. CODESIGNING.md in fork)
