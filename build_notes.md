@@ -261,6 +261,41 @@ host: no gcc/clang/MSYS toolchain, no arm64 execution (Win10 x64, no emulation) 
 - `.gitattributes`: `*.patch -text` (with global autocrlf=true the patch got CRLF in the worktree -> `git apply` failed on every hunk), `*.sh text eol=lf` (fixes the WSL `run_examples.sh` CRLF issue too)
 - when upstream merges a patch: script reports "already present, skipped" after the bump -> delete the file
 
+## 2026-10-05 upstream lines (branch `ci/upstream-lines`)
+
+goal: build more than the pinned master commit, eg. tag v8.44 + dev branch v91b, each with its own release here
+
+### findings (mac arm64 host, zig 0.16.0)
+
+- `build.zig` unchanged builds v8.44 (8.44), master 688940b (9.0b), v91b f677e39 (9.1b): `zig build release` all 6 targets, examples 31/31, 32/32, 36/36 (rc + output files only, no value check, other platforms need CI)
+- sorted globs == upstream's explicit CMake source lists at v8.41, v8.44, master, v91b (dglib 98/98/108/113 files), flags + include dirs same -> no per-version build script
+- what differs per line = patches only. `patches/0001` applies on master only: v91b 1 hunk context drift (`pList().writeMetafile()` in SubOpBasicMulti), v8.44 all 4 hunks (code before the `std::` prefixes, `ios::out`) -> `patches/v91b/0001`, `patches/v8.44/0001`, same commit message, regenerated with `git am -3` + format-patch in a scratch clone
+- v91b = master + 24 commits (0 behind), v8.44 = master - 72. upstream tagged `v9.03b` at 688940b (= our pinned master, `DGGRID_VERSION` still "9.0b")
+
+### design: one main, lines as data (no branch per upstream version)
+
+- `upstream.json`: one row per line, `line, ref, sha, patches, release, rolling, prerelease`. `sha: null` = submodule gitlink (default line master, local dev + prototype/ unchanged). keep one row per text line, the watchdog bumps the sha with sed
+- `ci/use_line.sh [--reset] <line>`: submodule -> the line's pinned commit + `ci/apply_patches.sh DGGRID <patches>`. refuses a dirty submodule without `--reset` (applied patches = dirty). needs jq. locally DGGRID then shows as modified, don't commit, back with `--reset master`
+- `ci/apply_patches.sh <src-dir> <patch-dir>...` (same as on proto/lib-dgreal, plus relative patch dirs + missing dir = error)
+- workflows: old `build.yml` -> `line.yml` (`workflow_call`, one line), new `build.yml` = triggers + `ci/plan_lines.sh` -> matrix over lines. a red v91b doesn't block edge
+- plan per event: PR -> master full, other lines build-only (patches + cross-compile, no native runners) = 12 jobs (+ plan) instead of 30; push main -> rolling lines full + publish (`edge`, `edge-v91b`), fixed build-only; tag `vX` or `vX-rN` -> fixed line with release `vX`, full + release `<tag>`; dispatch -> full, no publish, input `line` for one line
+- `-rN` = rebuild of the same upstream version (new zig, patch). prerelease flag from the row, the old "tag contains `-`" rule is gone
+- artifacts renamed: `dist-<line>`, `outputs-<line>-<platform>-<runner>`. asset names unchanged -> `releases/download/<release>/dggrid-<platform>.tar.gz`
+- watchdog: loops rolling rows, branch `watchdog/<line>-<sha10>`, gitlink bump for master, sha in `upstream.json` for the rest, dispatches `build.yml -f line=<line>`
+- checked locally: actionlint clean, plan output for every event type, `use_line.sh` v91b -> v8.44 -> master with build + examples. not checked: anything on a runner (reusable workflow + matrix, permissions for publish, fetch by sha on the windows runners)
+
+### first CI runs (PR #4, runs 37353115691 PR / 37353189919 dispatch all lines)
+
+- PR run green: plan + master full + v91b/v8.44 build-only, matrix over `line.yml` works, skipped jobs show as skipped
+- dispatch (all lines full): master 10/10, 2 real upstream findings in the other lines, both deterministic (rerun same)
+- v8.44 ubsan: `binpres` rc=132 (trap) on x86_64 linux only, not on mac arm64 / x86_64 rosetta. `SubOpBinPts::initVal` does `new bool[nClasses]` without init -> BIN_POINT_PRESENCE reads indeterminate bools (right by accident on zero pages). fixed upstream in 9.0b (f916ee4, 2026-06-28) -> `patches/v8.44/0002-binpres-init-presence-vector.patch` = backport of that hunk, author Kevin
+- v91b linux-arm64: `FATAL ERROR: DgAuthalic::authalicToGeodeticLatitude: inverse did not converge` in icosaISEAL + wholeEarthIGEO7v2 (34/36), all other platforms ok. new `DgAuthalicConverter.cpp` (7240e1b) iterates to `8 * LDBL_EPSILON`; quad long double there, but musl `log1pl` for 113-bit = `log1p` double ("TODO: broken implementation", zig lib/libc/musl/src/math/log1pl.c:171), `atanhl` goes through it -> q() noise ~1e-16, never converges in 64 iterations
+- -> `patches/v91b/0002-authalic-inverse-tolerance-quad-long-double.patch`: `8 * DBL_EPSILON` when `numeric_limits<long double>::digits > 64`, double + x87 unchanged. workaround for the musl builds, for Kevin rather a stall criterion (glibc has real quad log1pl) -> tell him, v91b is in flux
+
+- after both patches (runs 37355652265 line v91b, 37355656814 line v8.44, dispatch `-f line=`): 11/11 green each, PR run 37355657404 green (13 pass, 7 skipped)
+- v91b linux-arm64 with 0002 vs linux-x86_64 (artifacts `outputs-v91b-*`): icosaISEAL, wholeEarthIGEO7v2 kml same structure, differing numbers only beyond double precision (parse to the same double), same order as mac-arm64 vs linux-x86_64
+- cosmetic: a skipped matrix job shows as `test (${{ matrix.platform }} on ${{ matrix.runner }})` in the checks list (GitHub doesn't expand the name of a skipped matrix)
+
 ## open / next (state 2026-10-02 end of day)
 
 done today: repo + CI + edge release (PR #1), windows-x86_64 fixes (PR #2), precision probe kept for reference (PR #3, `precision.yml` manual / `probe/**` only). all feature branches merged + deleted, windows host session decommissioned (rented dept workstation, nothing permanent there)
@@ -270,7 +305,9 @@ next, roughly by priority:
 - windows-arm64 (parked): UCRT printf rounding, not libm -> `__USE_MINGW_ANSI_STDIO=1` + `src/mingw_ldouble_numput.cpp` also for aarch64-windows (check mingw pformat with long double == double), target byte-identical vs mac-arm64, then recheck z3CellClip/zCellClip cell counts. verify with precision probe + example outputs, needs a windows-11-arm runner only (CI), no windows host
 - upstream (Kevin): `patches/0001-output-streams-binary-mode.patch`; MSVC template fixes (`::DgDiscTopoRF` in DgDiscTopoRFS.h:313, DgRF.hpp:308) as `patches/0002`, `0003`; long double precision typedef (perf everywhere + aarch64-linux)
 - zig: report libc++ `ostream << long double` on mingw ucrt (ANSI_STDIO not reaching zig-built libc++) -> drop `src/mingw_ldouble_numput.cpp` once fixed
-- first tagged release `v9.0b-...` once value check is in CI?
+- upstream lines (2026-10-05 section): PR #4 green, not merged yet. after merge check `edge` + `edge-v91b`, then tag `v8.44` here for the first fixed release. Kevin: v91b authalic inverse on quad long double (`patches/v91b/0002`). lines tracked for now: legacy v8.44, master, dev v91b (no `v9.03b` line, decision 2026-10-05)
+- CLAUDE.md lives on proto/lib-dgreal only -> add the lines paragraph there after merge (build.yml/line.yml split, `use_line.sh`, artifact names)
+- first tagged release `v9.0b-...` once value check is in CI? more lines = more binaries checked by rc only until then
 - macos gatekeeper / notarisation (cf. CODESIGNING.md in fork)
 - aarch64-linux perf on a real arm runner (VM measured 35-45x vs mac)
 - geoarrow: C API / writer on top of libdglib + libgeoarrow (`prototype/lib-geoarrow-smoke/`), library builds as separate track
