@@ -305,6 +305,18 @@ goal: build more than the pinned master commit, eg. tag v8.44 + dev branch v91b,
 - `--latest=false` does NOT keep v8.44 off "Latest": it's the only non-prerelease here, GitHub falls back to it (`releases/latest` = v8.44, `gh release edit v8.44 --latest=false` no effect). flag only matters once a newer full release exists (a `v8.44-rN` then doesn't take Latest). if it bothers: `"prerelease": true` in the v8.44 row, or a first fixed 9.x release. comment in `line.yml` says "never Latest", too strong
 - proto/lib-dgreal (local only): main merged in, 1 conflict `ci/apply_patches.sh` -> main's version (superset), `prototype/lib/setup_src.sh` runs. CLAUDE.md there has the lines paragraph now
 
+### v9.1 (2026-10-31): master + fixed line, v91b retired
+
+- upstream tagged v9.1 on 2026-10-24 = master 4f8bf61, v91b merged into master (master only 2 docs commits ahead) -> `v91b` row + `patches/v91b` dropped, `edge-v91b` release stays as it is, add a new row once there is a next dev branch
+- watchdog bump builds red since 2026-10-23 (ad10d29, d3a7e8f, 4f8bf61), `0001` no longer applied. watchdog itself stays green -> easy to miss, 11 bump PRs piled up (#7-#17), closed now
+- `patches/0001`: SubOpOut hunk gone (TEXT output now goes through DgOutAddressFile -> DgOutputStream), rest same. not upstream yet
+- `patches/0002` (authalic, was v91b/0002): applies unchanged, now on master + v9.1. upstream added a correction stopping rule but the tolerance is still `8 * LDBL_EPSILON`
+- `patches/v9.1/` = own copy, master can move on
+- `examplesNoGDAL.lst` renamed to `examplesNoGDALorH3.lst` in e930aee -> old `run_examples.sh` ran nothing: `0/0 examples ok`, rc 0, the bad kind of green. now takes either name (v8.44 has the old one), no list -> rc 2. `compare_outputs.py` same lookup
+- no H3 (decision 2026-10-31): optional upstream (`WITH_H3`, skipped if not found), we never define `USE_H3` -> `-v` says `built without H3`, `dggs_type H3` is a fatal parameter error, `examplesH3.lst` not run. `h3Geom` in the NoGDALorH3 list runs fine
+- `build.zig` unchanged, all 6 targets ok. local mac arm64: 39/39 examples, v8.44 31/31 with the same scripts
+- compare vs sampleOutput on mac arm64: `.prj` + `.shp/.shx` in gridgenMixedSHP, hiRes, superfundGrid not chased, multipleOrientations random orientations differ (same on linux-x86_64 21 Oct, not new)
+
 ## open / next (state 2026-10-02 end of day)
 
 done today: repo + CI + edge release (PR #1), windows-x86_64 fixes (PR #2), precision probe kept for reference (PR #3, `precision.yml` manual / `probe/**` only). all feature branches merged + deleted, windows host session decommissioned (rented dept workstation, nothing permanent there)
