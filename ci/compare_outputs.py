@@ -45,7 +45,11 @@ def compare_text(a, b):
 def main():
     work = sys.argv[1]
     ref = sys.argv[2] if len(sys.argv) > 2 else os.path.join(work, "sampleOutput")
-    examples = open(os.path.join(work, "examplesNoGDAL.lst")).read().split()
+    # renamed in 9.1, v8.44 still has the old name
+    lst = os.path.join(work, "examplesNoGDALorH3.lst")
+    if not os.path.exists(lst):
+        lst = os.path.join(work, "examplesNoGDAL.lst")
+    examples = open(lst).read().split()
     rows = []
     for ex in examples:
         out_dir, ref_dir = os.path.join(work, ex, "outputfiles"), os.path.join(ref, ex)

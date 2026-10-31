@@ -10,7 +10,7 @@
 #
 #   apply_patches.sh                          patches/*.patch -> DGGRID submodule
 #   apply_patches.sh <src-dir> <patch-dir>... patch dirs in order -> <src-dir>, e.g. another
-#                                             upstream line (patches/v91b, see upstream.json)
+#                                             upstream line (patches/v8.44, see upstream.json)
 #                                             or the prototype's plain source copy (no git repo)
 set -euo pipefail
 shopt -s nullglob
