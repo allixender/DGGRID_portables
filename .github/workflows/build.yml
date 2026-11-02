@@ -1,7 +1,7 @@
 # Entry point: pick the upstream lines (rows of upstream.json) this event builds and run
 # the build/test/publish pipeline (line.yml) once per line. ci/plan_lines.sh decides:
 #   pull request       -> default line full, other lines build-only
-#   push to main       -> rolling lines full + rolling pre-release (edge, edge-v91b, ...),
+#   push to main       -> rolling lines full + rolling pre-release (edge, ...),
 #                         fixed lines build-only
 #   tag vX[-rN]        -> the fixed line with release vX, full + release <tag>
 #   workflow_dispatch  -> full, no publish; input `line` limits it to one line (watchdog)

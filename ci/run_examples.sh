@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # run_examples.sh <dggrid-exe> <workdir>
 #
-# Runs upstream's GDAL-free examples (DGGRID/examples/examplesNoGDAL.lst) with the given
-# binary in a scratch copy of the examples dir. Fails if any example exits non-zero or
+# Runs upstream's GDAL-free examples (DGGRID/examples/examplesNoGDALorH3.lst, before 9.1
+# examplesNoGDAL.lst) with the given binary in a scratch copy of the examples dir. Fails if any example exits non-zero or
 # misses an output file that upstream's sampleOutput has. Output *values* are compared
 # separately (compare_outputs.py, informational), see build_notes.md for why.
 set -u
@@ -16,6 +16,11 @@ src="$(cd "$(dirname "$0")/../DGGRID/examples" && pwd)"
 rm -rf "$work" && mkdir -p "$work" && cp -R "$src"/. "$work"/
 cd "$work" || exit 2
 
+# renamed in 9.1, v8.44 still has the old name. no list / empty list -> fail, not 0/0 ok
+lst=examplesNoGDALorH3.lst
+[ -f "$lst" ] || lst=examplesNoGDAL.lst
+[ -s "$lst" ] || { echo "::error::no examples list in $src"; exit 2; }
+
 summary=${GITHUB_STEP_SUMMARY:-/dev/null}
 {
   echo "### examples: \`$(basename "$exe")\` on $(uname -sm)"
@@ -25,7 +30,7 @@ summary=${GITHUB_STEP_SUMMARY:-/dev/null}
 } >> "$summary"
 
 failed=0
-for ex in $(tr -d '\r' < examplesNoGDAL.lst); do
+for ex in $(tr -d '\r' < "$lst"); do
   mkdir -p "$ex/outputfiles"
   t0=$(date +%s)
   (cd "$ex" && "$exe" "$ex.meta" > "outputfiles/$ex.txt" 2>&1)
@@ -50,7 +55,7 @@ for ex in $(tr -d '\r' < examplesNoGDAL.lst); do
   echo "| $ex | $rc | $secs | ${missing:--} |" >> "$summary"
 done
 
-total=$(tr -d '\r' < examplesNoGDAL.lst | wc -w | tr -d ' ')
+total=$(tr -d '\r' < "$lst" | wc -w | tr -d ' ')
 echo "$((total - failed))/$total examples ok"
 echo "**$((total - failed))/$total examples ok**" >> "$summary"
 [ $failed -eq 0 ]
