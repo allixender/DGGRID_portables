@@ -32,7 +32,7 @@ zig build -Dtarget=wasm32-wasi -Ddgreal=double -Doptimize=ReleaseFast -p zig-out
 
 all: vert0 lat exact icosahedron vertex 58.28252558853899.. (on the authalic sphere, also for L), azimuth 0
 
-functions: `dg_preset_new(preset)`, `dg_igeo7_new()` (= IGEO7v2, changed from the sphere grid before 9.1), `dg_ctx_new(proj, datum, vert0_lon, vert0_lat, az)` (lat NaN = exact vertex), `dg_geo_to_z7`, `dg_z7_to_centroid`, `dg_z7_to_boundary` (6 (lon, lat) pairs per cell, nverts 6 or 5, NaN padded), `dg_z7_res`, `dg_z7_to_string`, `dg_z7_from_string`, `dg_last_error`, `dg_alloc`/`dg_free`. single-threaded, one ctx per thread
+functions: `dg_preset_new(preset)`, `dg_igeo7_new()` (= IGEO7v2, changed from the sphere grid before 9.1), `dg_ctx_new(proj, datum, vert0_lon, vert0_lat, az)` (lat NaN = exact vertex), `dg_geo_to_z7`, `dg_z7_to_centroid`, `dg_z7_to_boundary` (6 (lon, lat) pairs per cell, nverts 6 or 5, NaN padded, lon > 180 across the antimeridian by default, `dg_ctx_set_lon_wrap`), `dg_z7_res`, `dg_z7_to_string`, `dg_z7_from_string`, `dg_last_error`, `dg_alloc`/`dg_free`. single-threaded, one ctx per thread
 
 ```julia
 ctx = @ccall lib.dg_preset_new(0::Cint)::Ptr{Cvoid}   # IGEO7v2, plain ccall, no CxxWrap
@@ -49,8 +49,8 @@ limits:
 
 ### checks 2026-11-02 (reference platforms: M2 Pro native, karula x86_64 native; DGGRID 9.1 @ 4f8bf61)
 
-- `zig build test`: 8/8, double + long double, mac arm64 + karula gnu + karula musl
-- `check_cli.py` vs unmodified root CLI, 4 presets, 3005 pts (random on the sphere + poles, ±180, vert0, Tartu): Z7 ids + strings identical at res 0/1/5/9/13/17/20; centroids + boundaries of those cells and whole earth res 1 + 3 (3432 cells, 12 pentagons) within 5.1e-13 deg (= CLI print precision 12)
+- `zig build test`: 9/9, double + long double, mac arm64 + karula gnu + karula musl
+- `check_cli.py` vs unmodified root CLI, 4 presets, 3005 pts (random on the sphere + poles, ±180, vert0, Tartu): Z7 ids + strings identical at res 0/1/5/9/13/17/20; centroids + boundaries of those cells and whole earth res 1 + 3 (3432 cells, 12 pentagons) in all 3 wrap modes, longitudes strict, within 5.1e-13 deg (= CLI print precision 12)
 - fuzz IGEO7v2 + IVEA7HL (scratch, not in repo): ca 17k valid ids -> centroid -> same cell 100%, 200k pts res 0/3/9/20 incl. lat 1e-300 and 90 - 1e-14, no fatal. 1 mismatch, res 20, 1e-14 deg from the pole
 - Julia ccall ok, same ids as CLI (IGEO7v2, IVEA7HL Tartu res 9)
 - aarch64-linux-musl in podman: smoke + bench, double and quad long double, same cell + hash
@@ -84,7 +84,27 @@ native via ctypes, 200k pts res 9, k/s:
 - inputs borrowed (sliced arrays ok), outputs owned by the caller -> release callbacks, `pa.Array._import_from_c`. on error outputs have release NULL + `dg_last_error`
 - null in -> null out, POINT EMPTY or NaN + NaN = null. only one NaN = error
 - input CRS: none = the preset's datum. WGS84 presets take OGC:CRS84 / EPSG:4326 (string or PROJJSON, top level GeographicCRS), authalic presets take none, else error, nothing reprojects. output: WGS84 presets OGC:CRS84 PROJJSON, authalic presets no CRS
-- polygon vertices = CLI WRAP mode -> cells across the antimeridian + around poles wrong in planar lon/lat. sample res 3 + 9: 34 of 6000 span > 180 deg, 9 invalid in shapely, the others valid but wrong shape (for plotting: check, or unwrap yourself). no `edges` tag, cell edges aren't planar lon/lat lines or exact great circles
+- longitudes: `dg_ctx_set_lon_wrap`, see below. no `edges` tag, cell edges aren't planar lon/lat lines or exact great circles
+
+### longitude wrap
+
+`dg_ctx_set_lon_wrap(ctx, DG_UNWRAP_EAST | DG_UNWRAP_WEST | DG_WRAP)`, = CLI `longitude_wrap_mode` via upstream's `DgGeoSphRF::lonWrap` (cell spanning >= 120 deg -> all vertices to one side). applies to `dg_z7_to_boundary` + polygons out. **default of a ctx = UNWRAP_EAST, CLI default = WRAP**
+
+- centroids stay in -180..180 (= CLI `unwrap_points FALSE`), points go back in as ids. point input takes up to +-360 and normalises -> shapely centroid of an unwrapped cell works too
+- east vs west: same cells, same counts, mirror images. east -> lon just past 180, up to 344 for the polar cells
+
+whole earth IGEO7v2, planar lon/lat, invalid in shapely / span > 120 deg / sum of areas (box = 64800):
+
+| res | WRAP | UNWRAP_EAST |
+|---|---|---|
+| 0 | 0 / 5 / 72000 | 0 / 4 / 58484 |
+| 1 | 5 / 12 / 96964 | 2 / 4 / 58389 |
+| 2 | 6 / 25 / 115553 | 0 / 4 / 64279 |
+| 3 | 20 / 65 / 123119 | 2 / 4 / 63876 |
+| 4 | 42 / 169 / 126833 | 0 / 4 / 64724 |
+| 5 | 113 / 436 / 128412 | 2 / 4 / 64668 |
+
+-> remaining 4 cells at every res = the 2 per pole whose shared edge runs through the pole (vertices jump exactly 180 deg). no longitude shift can fix these, would need extra vertices at the pole (lon +-180, lat +-90) or dropping to geography types. at even res they pass `is_valid` with a wrong shape. other presets same picture
 
 `check_arrow.py`, reference = raw buffer API + CLI cells.geojson: all 4 presets, all encodings + nulls, slices, int64 ids, empty arrays, 20 error cases incl. context usable after. consumers: pyarrow `validate(full=True)` + geoarrow-pyarrow, shapely (WKB / WKT), geopandas 1.2 both ways (own GeoArrow code, no geoarrow-c). wasm32 (other struct layout): dggrid.mjs reads the C structs, ids + polygons + nulls + CRS tag in test.mjs
 
@@ -128,7 +148,7 @@ native via ctypes, 200k pts res 9, k/s:
 
 ## next
 
-- polygons across the antimeridian: option to unwrap (DgGeoSphRF UnwrapEast / West) or split, around poles?
+- the 4 pole cells: pole vertices? (= leaves CLI parity)
 - whole table / ArrowArrayStream, chunked input is a loop on the caller's side for now
 - JS: arrow-js-ffi instead of the hand written struct reader in dggrid.mjs, untested
 - Z7 parent/children: digit truncation confirmed in DgZ7System::setAddNdxParent, children skip the pentagon digit, not exposed yet

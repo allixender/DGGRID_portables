@@ -14,6 +14,7 @@
 - 9.1 `DgAuthalic` inverse converges on musl double (8 * DBL_EPSILON tolerance) -> no trap in WGS84 mode. 0102 gone, upstream atan2l gives the same hash
 
 - Arrow + GeoArrow in dggrid.wasm too: 939 KB (262 KB gzip). `lonLatToZ7Arrow`, `z7ToPolygonsArrow` read the C structs by hand (wasm32: ArrowSchema 48 bytes, ArrowArray 64), checked in test.mjs. input schema `release` = 1 (non NULL = not released, never called). `dg_arrow_release_*` because JS can't call the callback directly
+- `setLonWrap(WRAP.EAST | WEST | NONE)`, default east, `z7ToBoundary` + polygons
 - also vs the 80-bit gcc CLI on karula: same result, pole ties only, 5.1e-12 deg
 
 ## dggrid.wasm + dggrid.mjs (JS API)

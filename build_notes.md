@@ -361,7 +361,9 @@ proto/lib-dgreal + origin/notes/v9.1-release merged, submodule on 4f8bf61
 - `check_arrow.py`: pyarrow + geoarrow-pyarrow, shapely, geopandas 1.2 as independent reader + writer. mac + karula (python 3.13 / 3.14, pyarrow 26), double + long double OK. max rss flat over 50 round trips
 - CRS guard, 2 wrong tries: substring `4326` + `GeographicCRS` let EPSG:3857 through (PROJJSON base_crs has both) -> depth aware scan of the top level `type`. PROJJSON comes as JSON object or escaped string (`with_crs(str)`) -> `GeoArrowUnescapeCrs` first, decide on the content, not crs_type
 - nanoarrow rejects schemas with release NULL -> hand built inputs need any non NULL (wasm + zig test)
-- polygons = CLI WRAP vertices, antimeridian + polar cells wrong in planar lon/lat, sample 34 of 6000 -> unwrap option next?
+- polygons with the CLI default WRAP wrong in planar lon/lat across the antimeridian -> `dg_ctx_set_lon_wrap`, = `longitude_wrap_mode` via `DgGeoSphRF::lonWrap`, default of a ctx UNWRAP_EAST (decision 2026-11-02). east + west same cells. whole earth res 5: span > 120 deg 436 -> 4, invalid 113 -> 2, planar area sum 128412 -> 64668 of the 64800 box
+- the 4 left at every res = 2 per pole, shared edge through the pole. needs pole vertices, not a shift, open
+- only polygons unwrap. `unwrap_points` would put centroids at 191.2 and `dg_geo_to_z7` refused > 180 -> centroids stay normal, point input takes +-360 and normalises
 
 ### macos-x86_64 under Rosetta, WGS84 presets fatal (not chased, decision 2026-11-02: mac arm + linux amd native are the reference)
 
