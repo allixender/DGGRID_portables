@@ -28,6 +28,7 @@ work = sys.argv[2] if len(sys.argv) > 2 else None
 vp, dbl, u64, u8 = C.c_void_p, C.POINTER(C.c_double), C.POINTER(C.c_uint64), C.POINTER(C.c_uint8)
 lib.dg_preset_new.argtypes, lib.dg_preset_new.restype = [C.c_int], vp
 lib.dg_ctx_free.argtypes = [vp]
+lib.dg_ctx_set_lon_wrap.argtypes = [vp, C.c_int]
 lib.dg_last_error.argtypes, lib.dg_last_error.restype = [vp], C.c_char_p
 lib.dg_geo_to_z7.argtypes = [vp, C.c_int, dbl, dbl, C.c_size_t, u64]
 lib.dg_z7_to_centroid.argtypes = [vp, u64, C.c_size_t, dbl, dbl]
@@ -131,6 +132,21 @@ def z7_to_polygons(ctx, ids, enc=NATIVE, expect_ok=True):
 
 def with_crs(arr, crs):
     return arr.type.with_crs(crs).wrap_array(arr.storage)
+
+
+def all_ids(res):
+    """every cell at res, from the Z7 digit rule: a pentagon (base cell + zeros) skips one digit"""
+    out = []
+    for q in range(12):
+        skip = 2 if q <= 5 else 5
+        level = [(q << 60, True)]
+        for r in range(1, res + 1):
+            shift = (20 - r) * 3
+            level = [(z | (d << shift), pent and d == 0) for z, pent in level for d in range(7)
+                     if not (pent and d == skip)]
+        padding = sum(7 << ((20 - r) * 3) for r in range(res + 1, 21))
+        out += [z | padding for z, _ in level]
+    return np.array(out, dtype=np.uint64)
 
 
 def to_shapely(arr):
@@ -263,10 +279,35 @@ for name, preset in PRESETS.items():
     check(len(z7_to_polygons(ctx, pa.array([], type=pa.uint64()))) == 0, f"{name} empty polygons")
     check(len(geo_to_z7(ctx, RES, struct_pts.slice(0, 0))) == 0, f"{name} empty points")
 
-    # geometry sanity, whole res 3: valid polygons, how many are broken by the antimeridian / poles
-    valid = shapely.is_valid(shp["native"])
-    span = np.array([np.ptp(r[:, 0]) for r in rings]) > 180
-    check((valid | span).all(), f"{name}: {(~(valid | span)).sum()} invalid polygons away from the antimeridian")
+    # geometry: whole earth by resolution, unwrapped east (default) vs west vs CLI default WRAP.
+    # planar lon/lat: invalid or shifted only at the poles, areas add up to the 360 x 180 box
+    stats = []
+    for res in range(0, 6):
+        cells = pa.array(all_ids(res), type=pa.uint64())
+        check(len(cells) == 10 * 7 ** res + 2, f"{name} res {res}: {len(cells)} ids")
+        row = [res]
+        for mode in (2, 0, 1):  # east last = stays set
+            assert lib.dg_ctx_set_lon_wrap(ctx, mode) == 0
+            g = to_shapely(z7_to_polygons(ctx, cells))
+            xy = [shapely.get_coordinates(p) for p in g]
+            spn = np.array([np.ptp(c[:, 0]) for c in xy])
+            near = np.array([np.abs(c[:, 1]).max() for c in xy])
+            ok = shapely.is_valid(g)
+            row.append((int((~ok).sum()), int((spn > 120).sum()), float(shapely.area(g).sum())))
+            if mode != 0:
+                # every bad cell reaches a pole, nothing else stays wrong
+                bad = ~ok | (spn > 120)
+                cap = 90 - 1.5 * 0.62 * np.sqrt(510.0656e6 / (10 * 7 ** res + 2)) / 111.2
+                check(res < 2 or (near[bad] > cap).all(), f"{name} res {res} mode {mode}: bad cells away from the poles")
+        stats.append(row)
+    print(f"{name} whole earth: res, (invalid, span > 120, planar area) WEST | WRAP | EAST")
+    for row in stats:
+        print(f"  res {row[0]}: {row[1][0]:3d} {row[1][1]:3d} {row[1][2]:9.1f} | {row[2][0]:4d} {row[2][1]:5d} {row[2][2]:9.1f} | {row[3][0]:3d} {row[3][1]:3d} {row[3][2]:9.1f}")
+    assert lib.dg_ctx_set_lon_wrap(ctx, 9) != 0
+    # centroids stay normal points, vertices of an unwrapped cell go back in
+    c = np.array(z7_to_points(ctx, pa.array(all_ids(3), type=pa.uint64())).storage.field(0))
+    check(np.abs(c).max() <= 180, f"{name} centroid lon out of range")
+    ids_equal(lonlat_to_z7(ctx, RES, pa.array(np.where(lon < 0, lon + 360, lon)), plat), ref, f"{name} lon 0-360 input")
 
     # ---- errors, context stays usable ----
     geo_to_z7(ctx, RES, ga.array(["LINESTRING (0 0, 1 1)"]), expect_ok=False)
@@ -299,7 +340,6 @@ for name, preset in PRESETS.items():
         check(bmax < 1e-9, f"{name} polygons vs CLI {bmax}")
         print(f"{name}: {len(rows)} polygons vs CLI cells.geojson, max diff {bmax:.1e} deg")
 
-    print(f"{name}: invalid planar polygons {(~valid).sum()} of {len(valid)}, across antimeridian {span.sum()}, crs {'CRS84' if wgs84 else 'none'}")
     lib.dg_ctx_free(ctx)
 
 # ---- release: repeated round trips must not grow ----

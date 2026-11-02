@@ -1,7 +1,7 @@
 /* dggrid.h: prototype IGEO7 library (DGGRID 9.1 aperture 7 hexagon presets + Z7 index).
  *
  * Implemented in dggrid.zig on top of dgcore.cpp (DGGRID). Coordinates are degrees,
- * lon in [-180, 180], lat in [-90, 90]. Geodetic WGS84 latitudes for the WGS84 presets
+ * lon in [-180, 180] (input also up to +-360, normalised), lat in [-90, 90]. Geodetic WGS84 latitudes for the WGS84 presets
  * (IGEO7v2, IVEA7HL), authalic sphere latitudes for the others. Batch functions return
  * DG_OK or a negative code, with a message from dg_last_error(ctx). A context is not
  * thread-safe, use one per thread.
@@ -48,6 +48,13 @@ dg_ctx* dg_igeo7_new(void);
  * for DG_DATUM_WGS84. vert0_lat NaN: the exact icosahedron vertex latitude */
 dg_ctx* dg_ctx_new(int proj, int datum, double vert0_lon, double vert0_lat, double azimuth);
 void    dg_ctx_free(dg_ctx* ctx);
+/* Boundaries of cells across the antimeridian. All vertices of a cell spanning 120 deg or
+ * more go to one side, as the CLI's longitude_wrap_mode. Cells touching a pole stay wrong in
+ * planar lon/lat, no shift fixes those. Centroids are always in [-180, 180]. */
+#define DG_WRAP         0   /* every vertex in [-180, 180], CLI default */
+#define DG_UNWRAP_EAST  1   /* negative lons + 360, ie. lon > 180. default of a new ctx */
+#define DG_UNWRAP_WEST  2   /* positive lons - 360, ie. lon < -180 */
+int dg_ctx_set_lon_wrap(dg_ctx* ctx, int mode);
 /* message of the last error on ctx; ctx == NULL: why the last dg_*_new failed */
 const char* dg_last_error(const dg_ctx* ctx);
 

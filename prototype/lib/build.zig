@@ -130,7 +130,7 @@ pub fn build(b: *std.Build) void {
 
 const api_exports = [_][]const u8{
     "dg_igeo7_new",      "dg_preset_new",      "dg_ctx_new",        "dg_ctx_free",
-    "dg_last_error",     "dg_ctx_datum",
+    "dg_last_error",     "dg_ctx_datum",       "dg_ctx_set_lon_wrap",
     "dg_arrow_geo_to_z7", "dg_arrow_lonlat_to_z7", "dg_arrow_z7_to_points", "dg_arrow_z7_to_polygons",
     "dg_arrow_release_schema", "dg_arrow_release_array",
     "dg_geo_to_z7",      "dg_z7_to_centroid",  "dg_z7_to_boundary", "dg_z7_res",

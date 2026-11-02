@@ -5,7 +5,7 @@
 // for IGEO7v2.
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { Igeo7, PRESET } from './dggrid.mjs';
+import { Igeo7, PRESET, WRAP } from './dggrid.mjs';
 
 const [wasmPath, work] = process.argv.slice(2);
 let fails = 0;
@@ -38,6 +38,21 @@ for (const [name, preset] of Object.entries(PRESET)) {
   ]) {
     try { fn(); check(false, `${what}: no error`); } catch (e) { console.log(`${what} -> ${e.message}`); }
   }
+
+  // antimeridian cell: east (default), west, CLI default WRAP
+  const across = dg.geoToZ7(3, [180], [10]);
+  const span = () => {
+    const l = dg.z7ToBoundary(across)[0].map((v) => v[0]);
+    return [Math.min(...l), Math.max(...l)];
+  };
+  const [e0, e1] = span();
+  dg.setLonWrap(WRAP.WEST);
+  const [w0, w1] = span();
+  dg.setLonWrap(WRAP.NONE);
+  const [n0, n1] = span();
+  dg.setLonWrap(WRAP.EAST);
+  check(e1 > 180 && e1 - e0 < 60 && w0 < -180 && w1 - w0 < 60 && n1 - n0 > 300 && n1 <= 180,
+        `wrap modes ${[e0, e1, w0, w1, n0, n1]}`);
 
   // Arrow C structs on wasm32: same ids + vertices as the raw API, nulls, CRS tag
   const al = dg.lonLatToZ7Arrow(9, [26.729, NaN, 0], [58.378, NaN, 0]);

@@ -8,7 +8,8 @@ IVEA7HS). The CLI can be any 9.1 build, best the unmodified root one (../../zig-
   - random points -> Z7 int at several resolutions (TRANSFORM_POINTS GEO -> HIERNDX)
   - Z7 -> Z7 string (CLI DIGIT_STRING) and back
   - those cells' centroids + boundaries (GENERATE_GRID ADDRESS_FILES, GeoJSON + TEXT)
-  - whole earth grids at res 1 and 3: every cell incl. the 12 pentagons
+  - whole earth grids at res 1 and 3: every cell incl. the 12 pentagons, in all 3
+    longitude_wrap_mode settings, boundary longitudes strict (no modulo 360)
 
 Exits 1 on any mismatch. Outputs stay in <workdir>/<preset>/ (for ../wasm/test.mjs).
 """
@@ -30,6 +31,7 @@ dbl_p, u64_p, u8_p = C.POINTER(C.c_double), C.POINTER(C.c_uint64), C.POINTER(C.c
 lib.dg_preset_new.argtypes = [C.c_int]
 lib.dg_preset_new.restype = C.c_void_p
 lib.dg_ctx_free.argtypes = [C.c_void_p]
+lib.dg_ctx_set_lon_wrap.argtypes = [C.c_void_p, C.c_int]
 lib.dg_last_error.argtypes = [C.c_void_p]
 lib.dg_last_error.restype = C.c_char_p
 lib.dg_geo_to_z7.argtypes = [C.c_void_p, C.c_int, dbl_p, dbl_p, C.c_size_t, u64_p]
@@ -101,7 +103,8 @@ gen_common = {"dggrid_operation": "GENERATE_GRID", "cell_output_type": "GEOJSON"
               "cell_output_file_name": "cells", "point_output_type": "TEXT",
               "point_output_file_name": "cpts", "output_cell_label_type": "OUTPUT_ADDRESS_TYPE",
               "output_address_type": "HIERNDX", "output_hier_ndx_system": "Z7",
-              "output_hier_ndx_form": "INT64", "densification": 0}
+              "output_hier_ndx_form": "INT64", "densification": 0,
+              "longitude_wrap_mode": "UNWRAP_EAST", "unwrap_points": "FALSE"}
 
 
 def compare_cells(label, ids, pentagons=None):
@@ -134,7 +137,7 @@ def compare_cells(label, ids, pentagons=None):
             bad += 1
             continue
         for (a, b), (c, d) in zip(poly, ring):
-            e = max(lon_diff(a, c) * (abs(b) < 89.999), abs(b - d))
+            e = max(abs(a - c) * (abs(b) < 89.999), abs(b - d))  # strict, unwrapped lons count
             if abs(b) > 89:
                 pmax = max(pmax, e)
             else:
@@ -213,12 +216,16 @@ for preset in presets:
                         "input_hier_ndx_system": "Z7", "input_hier_ndx_form": "INT64"})
         compare_cells(f"res {res:2d}: {len(ids)} pts", sorted(set(ids)))
 
-    # ---- whole earth: every cell incl. the 12 pentagons ----
-    for res in (1, 3):
-        run_cli("gen", {**gen_common, "dggs_res_spec": res, "clip_subset_type": "WHOLE_EARTH"})
-        with open(os.path.join(work, "cells.geojson")) as f:
-            ids = [int(ft["properties"]["name"], 16) for ft in json.load(f)["features"]]
-        compare_cells(f"res {res:2d}: whole earth", ids, pentagons=12)
+    # ---- whole earth: every cell incl. the 12 pentagons, all wrap modes. EAST last, the
+    # default, ../wasm/test.mjs + check_arrow.py read that run
+    for mode, wrap in ((0, "WRAP"), (2, "UNWRAP_WEST"), (1, "UNWRAP_EAST")):
+        assert lib.dg_ctx_set_lon_wrap(ctx, mode) == 0
+        for res in (1, 3):
+            run_cli("gen", {**gen_common, "dggs_res_spec": res, "clip_subset_type": "WHOLE_EARTH",
+                            "longitude_wrap_mode": wrap})
+            with open(os.path.join(work, "cells.geojson")) as f:
+                ids = [int(ft["properties"]["name"], 16) for ft in json.load(f)["features"]]
+            compare_cells(f"res {res:2d}: whole earth {wrap}", ids, pentagons=12)
 
     lib.dg_ctx_free(ctx)
 

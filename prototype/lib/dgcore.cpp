@@ -47,6 +47,7 @@ struct dgc_ctx {
    const DgIDGGSBase* dggs = nullptr;
    const DgHierNdxSystemRFSBase* z7 = nullptr;
    bool wgs84 = false;
+   DgGeoSphRF::DgLonWrapMode lonWrap = DgGeoSphRF::UnwrapEast;
    int maxRes = 0;
    std::string err;
 
@@ -61,6 +62,9 @@ static void throwFatal(const std::string& message) { throw std::runtime_error(me
 // pi/2, which is a fatal error there, so the poles go in exact.
 static DgGeoCoord toGrid(const dgc_ctx* ctx, double lonDeg, double latDeg)
 {
+   // an unwrapped cell's vertices and centres go up to +-360, see dgc_set_lon_wrap
+   if (lonDeg > 180.0) lonDeg -= 360.0;
+   else if (lonDeg < -180.0) lonDeg += 360.0;
    DgGeoCoord g(lonDeg, latDeg, false);
    if (ctx->wgs84) {
       const dgreal halfPi = M_2PI / DGR(4.0);
@@ -117,6 +121,14 @@ const char* dgc_last_error(const dgc_ctx* ctx) { return ctx->err.c_str(); }
 
 int dgc_max_res(const dgc_ctx* ctx) { return ctx->maxRes; }
 
+// boundaries only, centroids stay in -180..180 (= CLI unwrap_points FALSE), they are points
+// and go back in. 0 WRAP, 1 UNWRAP_EAST, 2 UNWRAP_WEST = CLI longitude_wrap_mode
+void dgc_set_lon_wrap(dgc_ctx* ctx, int mode)
+{
+   ctx->lonWrap = mode == 0 ? DgGeoSphRF::Wrap :
+                  mode == 2 ? DgGeoSphRF::UnwrapWest : DgGeoSphRF::UnwrapEast;
+}
+
 int dgc_geo_to_z7(dgc_ctx* ctx, int res, const double* lon, const double* lat, size_t n,
                   uint64_t* out)
 {
@@ -170,6 +182,7 @@ int dgc_z7_to_boundary(dgc_ctx* ctx, int res, const uint64_t* z7, size_t n,
       DgLocation loc(ctx->z7->sysRF(res));
       setCell(ctx, res, z7[i], loc);
       dgg.setVertices(loc, poly, 0);
+      DgGeoSphRF::lonWrap(poly, ctx->lonWrap);
       int nv = poly.size();
       if (nv > 6) return ctx->fail("cell with more than 6 vertices");
       double* o = lonlat + i * 12;

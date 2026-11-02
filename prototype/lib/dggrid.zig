@@ -25,6 +25,10 @@ pub const DG_PROJ_IVEA: c_int = 1;
 pub const DG_DATUM_AUTHALIC: c_int = 0;
 pub const DG_DATUM_WGS84: c_int = 1;
 
+pub const DG_WRAP: c_int = 0;
+pub const DG_UNWRAP_EAST: c_int = 1;
+pub const DG_UNWRAP_WEST: c_int = 2;
+
 pub const DG_IGEO7V2: c_int = 0;
 pub const DG_IGEO7V1: c_int = 1;
 pub const DG_IVEA7HL: c_int = 2;
@@ -44,6 +48,7 @@ const presets = [_]Preset{
 const Core = opaque {};
 extern fn dgc_new(proj: [*:0]const u8, wgs84: c_int, vert0_lon: f64, vert0_lat: f64, azimuth: f64, max_res: c_int, err: [*]u8, err_len: usize) ?*Core;
 extern fn dgc_free(core: *Core) void;
+extern fn dgc_set_lon_wrap(core: *Core, mode: c_int) void;
 extern fn dgc_last_error(core: *const Core) [*:0]const u8;
 extern fn dgc_geo_to_z7(core: *Core, res: c_int, lon: [*]const f64, lat: [*]const f64, n: usize, out: [*]u64) c_int;
 extern fn dgc_z7_to_centroid(core: *Core, res: c_int, z7: [*]const u64, n: usize, lon: [*]f64, lat: [*]f64) c_int;
@@ -141,6 +146,14 @@ export fn dg_ctx_new(proj: c_int, datum: c_int, vert0_lon: f64, vert0_lat: f64, 
     return ctx;
 }
 
+/// boundaries across the antimeridian: DG_UNWRAP_EAST (default), DG_UNWRAP_WEST, DG_WRAP
+export fn dg_ctx_set_lon_wrap(ctx: *Ctx, mode: c_int) c_int {
+    if (mode != DG_WRAP and mode != DG_UNWRAP_EAST and mode != DG_UNWRAP_WEST)
+        return ctx.fail(DG_EINVAL, "unknown longitude wrap mode {d}", .{mode});
+    dgc_set_lon_wrap(ctx.core, mode);
+    return DG_OK;
+}
+
 export fn dg_ctx_datum(ctx: *const Ctx) c_int {
     return ctx.datum;
 }
@@ -165,7 +178,7 @@ export fn dg_last_error(ctx: ?*const Ctx) [*:0]const u8 {
 export fn dg_geo_to_z7(ctx: *Ctx, res: c_int, lon: [*]const f64, lat: [*]const f64, n: usize, out: [*]u64) c_int {
     if (checkRes(ctx, res)) |e| return e;
     for (0..n) |i| {
-        if (!std.math.isFinite(lon[i]) or !std.math.isFinite(lat[i]) or @abs(lat[i]) > 90 or @abs(lon[i]) > 180)
+        if (!std.math.isFinite(lon[i]) or !std.math.isFinite(lat[i]) or @abs(lat[i]) > 90 or @abs(lon[i]) > 360)
             return ctx.fail(DG_EINVAL, "point {d}: invalid lon/lat ({d}, {d})", .{ i, lon[i], lat[i] });
     }
     if (dgc_geo_to_z7(ctx.core, res, lon, lat, n, out) != 0) return ctx.failCore();
@@ -344,6 +357,48 @@ test "presets: Tartu res 9 id = CLI, centroid + boundary round trip" {
         try testing.expectEqual(DG_OK, dg_z7_to_boundary(ctx, &z7, 3, &ll, &nv));
         try testing.expectEqualSlices(u8, &.{ 6, 6, 6 }, &nv);
     }
+}
+
+test "longitude wrap: cell across the antimeridian, default east, centroid stays a normal point" {
+    const ctx = dg_preset_new(DG_IGEO7V2) orelse return error.CtxNew;
+    defer dg_ctx_free(ctx);
+    const z = [_]u64{0x1ae7ffffffffffff}; // res 3, CLI: lons 178.4 .. -175.7
+    var ll: [12]f64 = undefined;
+    var nv: [1]u8 = undefined;
+    const Case = struct { mode: c_int, lo: f64, hi: f64 };
+    for ([_]Case{
+        .{ .mode = DG_UNWRAP_EAST, .lo = 170, .hi = 190 },
+        .{ .mode = DG_UNWRAP_WEST, .lo = -190, .hi = -170 },
+    }) |c| {
+        try testing.expectEqual(DG_OK, dg_ctx_set_lon_wrap(ctx, c.mode));
+        try testing.expectEqual(DG_OK, dg_z7_to_boundary(ctx, &z, 1, &ll, &nv));
+        for (0..6) |v| try testing.expect(ll[2 * v] > c.lo and ll[2 * v] < c.hi);
+    }
+    try testing.expectEqual(DG_OK, dg_ctx_set_lon_wrap(ctx, DG_WRAP));
+    try testing.expectEqual(DG_OK, dg_z7_to_boundary(ctx, &z, 1, &ll, &nv));
+    var lo: f64 = 180;
+    var hi: f64 = -180;
+    for (0..6) |v| {
+        lo = @min(lo, ll[2 * v]);
+        hi = @max(hi, ll[2 * v]);
+    }
+    try testing.expect(hi - lo > 300);
+    try testing.expectEqual(DG_EINVAL, dg_ctx_set_lon_wrap(ctx, 9));
+
+    // default east again: vertex lon > 180 as input = the same place
+    try testing.expectEqual(DG_OK, dg_ctx_set_lon_wrap(ctx, DG_UNWRAP_EAST));
+    var clon: [1]f64 = undefined;
+    var clat: [1]f64 = undefined;
+    try testing.expectEqual(DG_OK, dg_z7_to_centroid(ctx, &z, 1, &clon, &clat));
+    try testing.expect(@abs(clon[0]) <= 180);
+    var back: [1]u64 = undefined;
+    try testing.expectEqual(DG_OK, dg_geo_to_z7(ctx, 3, &clon, &clat, 1, &back));
+    try testing.expectEqual(z[0], back[0]);
+    const shifted = [_]f64{if (clon[0] < 0) clon[0] + 360 else clon[0] - 360};
+    try testing.expectEqual(DG_OK, dg_geo_to_z7(ctx, 3, &shifted, &clat, 1, &back));
+    try testing.expectEqual(z[0], back[0]);
+    const too_far = [_]f64{361.0};
+    try testing.expectEqual(DG_EINVAL, dg_geo_to_z7(ctx, 3, &too_far, &clat, 1, &back));
 }
 
 test "IVEA7HL by hand = the preset (vert0 lon 11.2, exact vertex lat)" {

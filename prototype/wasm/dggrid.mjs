@@ -18,6 +18,8 @@
 /** DGGRID 9.1 dggs_type presets (include/dggrid.h) */
 export const PRESET = Object.freeze({ IGEO7v2: 0, IGEO7v1: 1, IVEA7HL: 2, IVEA7HS: 3 });
 
+export const WRAP = Object.freeze({ NONE: 0, EAST: 1, WEST: 2 });
+
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 
@@ -68,6 +70,9 @@ export class Igeo7 {
   }
 
   free() { this.x.dg_ctx_free(this.ctx); this.ctx = 0; }
+
+  /** boundaries across the antimeridian: WRAP.EAST (default), WRAP.WEST, WRAP.NONE */
+  setLonWrap(mode) { this.#check(this.x.dg_ctx_set_lon_wrap(this.ctx, mode), 'dg_ctx_set_lon_wrap'); }
 
   #cstr(ptr) {
     const mem = new Uint8Array(this.x.memory.buffer);

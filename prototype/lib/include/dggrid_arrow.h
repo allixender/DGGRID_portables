@@ -14,9 +14,10 @@
  * ids: uint64 "z7", int64 accepted on input (same bits, base cells 8-11 look negative).
  *
  * geometry out: encoding DG_ARROW_*, WGS84 presets tagged OGC:CRS84, authalic ones have no
- * CRS. Polygon rings closed, vertices as the DGGRID CLI (WRAP): cells across the
- * antimeridian or around a pole are not valid planar polygons. Not tagged with edges,
- * cell edges are neither planar lon/lat lines nor exactly great circles.
+ * CRS. Polygon rings closed, longitudes per dg_ctx_set_lon_wrap, default UNWRAP_EAST: lon
+ * above 180 for cells across the antimeridian. Cells touching a pole are not valid planar
+ * polygons. Not tagged with edges, cell edges are neither planar lon/lat lines nor exactly
+ * great circles.
  */
 #ifndef DGGRID_ARROW_H
 #define DGGRID_ARROW_H
