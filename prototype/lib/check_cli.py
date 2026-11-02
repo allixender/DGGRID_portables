@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""check_cli.py <libdggrid> <dggrid-cli> <workdir>
+"""check_cli.py <libdggrid> <dggrid-cli> <workdir> [preset ...]
 
 Cross-check of the C API, called via ctypes (= how a Python binding would use it),
-against the dggrid CLI with dggs_type IGEO7. Build both with the same -Ddgreal:
+against the dggrid CLI, per dggs_type preset (default all: IGEO7v2 IGEO7v1 IVEA7HL
+IVEA7HS). The CLI can be any 9.1 build, best the unmodified root one (../../zig-out/bin/dggrid):
 
   - random points -> Z7 int at several resolutions (TRANSFORM_POINTS GEO -> HIERNDX)
   - Z7 -> Z7 string (CLI DIGIT_STRING) and back
   - those cells' centroids + boundaries (GENERATE_GRID ADDRESS_FILES, GeoJSON + TEXT)
   - whole earth grids at res 1 and 3: every cell incl. the 12 pentagons
 
-Exits 1 on any mismatch.
+Exits 1 on any mismatch. Outputs stay in <workdir>/<preset>/ (for ../wasm/test.mjs).
 """
 import ctypes as C
 import json
@@ -19,12 +20,15 @@ import random
 import subprocess
 import sys
 
-lib_path, cli, work = sys.argv[1], os.path.abspath(sys.argv[2]), sys.argv[3]
-os.makedirs(work, exist_ok=True)
+PRESETS = {"IGEO7v2": 0, "IGEO7v1": 1, "IVEA7HL": 2, "IVEA7HS": 3}
+
+lib_path, cli, root_work = sys.argv[1], os.path.abspath(sys.argv[2]), sys.argv[3]
+presets = sys.argv[4:] or list(PRESETS)
 
 lib = C.CDLL(lib_path)
 dbl_p, u64_p, u8_p = C.POINTER(C.c_double), C.POINTER(C.c_uint64), C.POINTER(C.c_uint8)
-lib.dg_igeo7_new.restype = C.c_void_p
+lib.dg_preset_new.argtypes = [C.c_int]
+lib.dg_preset_new.restype = C.c_void_p
 lib.dg_ctx_free.argtypes = [C.c_void_p]
 lib.dg_last_error.argtypes = [C.c_void_p]
 lib.dg_last_error.restype = C.c_char_p
@@ -34,9 +38,9 @@ lib.dg_z7_to_boundary.argtypes = [C.c_void_p, u64_p, C.c_size_t, dbl_p, u8_p]
 lib.dg_z7_to_string.argtypes = [C.c_uint64, C.c_char_p, C.c_size_t]
 lib.dg_z7_from_string.argtypes = [C.c_char_p, C.c_size_t, u64_p]
 
-ctx = lib.dg_igeo7_new()
-assert ctx, lib.dg_last_error(None)
+lib.dg_last_error.restype = C.c_char_p
 fails = 0
+ctx = work = preset = None
 
 
 def check(cond, what):
@@ -54,7 +58,7 @@ def call(rc):
 def run_cli(name, params):
     meta = os.path.join(work, name + ".meta")
     with open(meta, "w") as f:
-        f.write("dggs_type IGEO7\nprecision 12\n")
+        f.write(f"dggs_type {preset}\nprecision 12\n")
         for k, v in params.items():
             f.write(f"{k} {v}\n")
     r = subprocess.run([cli, name + ".meta"], cwd=work, capture_output=True, text=True)
@@ -138,50 +142,58 @@ lons = [rnd.uniform(-180, 180) for _ in range(3000)]
 lats = [math.degrees(math.asin(rnd.uniform(-1, 1))) for _ in range(3000)]  # uniform on the sphere
 lons += [0.0, 180.0, -180.0, 11.25, 26.729]
 lats += [90.0, -90.0, 0.0, 58.28252559, 58.378]
-with open(os.path.join(work, "pts.txt"), "w") as f:
-    for lo, la in zip(lons, lats):
-        f.write(f"{lo:.12f} {la:.12f}\n")
+pts_txt = "".join(f"{lo:.12f} {la:.12f}\n" for lo, la in zip(lons, lats))
 lons = [float(f"{x:.12f}") for x in lons]  # what the CLI reads
 lats = [float(f"{x:.12f}") for x in lats]
 
-for res in (0, 1, 5, 9, 13, 17, 20):
-    common = {"dggrid_operation": "TRANSFORM_POINTS", "dggs_res_spec": res,
-              "input_delimiter": '" "', "output_delimiter": '" "'}
-    run_cli("geo2z7", {**common, "input_file_name": "pts.txt", "input_address_type": "GEO",
-                       "output_file_name": "z7.txt", "output_address_type": "HIERNDX",
-                       "output_hier_ndx_system": "Z7", "output_hier_ndx_form": "INT64"})
-    cli_ids = [int(l[0], 16) for l in read_lines("z7.txt")]
-    ids = geo_to_z7(res, lons, lats)
-    nd = sum(a != b for a, b in zip(ids, cli_ids))
-    check(len(ids) == len(cli_ids) and nd == 0, f"res {res}: {nd} of {len(ids)} Z7 ids differ from CLI")
+for preset in presets:
+    print(f"---- {preset}")
+    work = os.path.join(root_work, preset)
+    os.makedirs(work, exist_ok=True)
+    with open(os.path.join(work, "pts.txt"), "w") as f:
+        f.write(pts_txt)
+    ctx = lib.dg_preset_new(PRESETS[preset])
+    assert ctx, lib.dg_last_error(None)
 
-    run_cli("z72str", {**common, "input_file_name": "z7.txt", "input_address_type": "HIERNDX",
-                       "input_hier_ndx_system": "Z7", "input_hier_ndx_form": "INT64",
-                       "output_file_name": "z7str.txt", "output_address_type": "HIERNDX",
-                       "output_hier_ndx_system": "Z7", "output_hier_ndx_form": "DIGIT_STRING"})
-    buf = C.create_string_buffer(32)
-    bad = 0
-    for z, (s,) in zip(ids, read_lines("z7str.txt")):
-        n = lib.dg_z7_to_string(z, buf, 32)
-        back = C.c_uint64()
-        ok = n == len(s) and buf.value.decode() == s
-        ok = ok and lib.dg_z7_from_string(s.encode(), len(s), C.byref(back)) == 0 and back.value == z
-        bad += not ok
-    check(bad == 0, f"res {res}: {bad} Z7 strings differ from CLI / don't round trip")
-    print(f"res {res:2d}: {len(ids)} pts -> Z7 ids + strings identical to CLI")
+    for res in (0, 1, 5, 9, 13, 17, 20):
+        common = {"dggrid_operation": "TRANSFORM_POINTS", "dggs_res_spec": res,
+                  "input_delimiter": '" "', "output_delimiter": '" "'}
+        run_cli("geo2z7", {**common, "input_file_name": "pts.txt", "input_address_type": "GEO",
+                           "output_file_name": "z7.txt", "output_address_type": "HIERNDX",
+                           "output_hier_ndx_system": "Z7", "output_hier_ndx_form": "INT64"})
+        cli_ids = [int(l[0], 16) for l in read_lines("z7.txt")]
+        ids = geo_to_z7(res, lons, lats)
+        nd = sum(a != b for a, b in zip(ids, cli_ids))
+        check(len(ids) == len(cli_ids) and nd == 0, f"res {res}: {nd} of {len(ids)} Z7 ids differ from CLI")
 
-    run_cli("gen", {**gen_common, "dggs_res_spec": res, "clip_subset_type": "ADDRESS_FILES",
-                    "clip_region_files": "z7.txt", "input_address_type": "HIERNDX",
-                    "input_hier_ndx_system": "Z7", "input_hier_ndx_form": "INT64"})
-    compare_cells(f"res {res:2d}: {len(ids)} pts", sorted(set(ids)))
+        run_cli("z72str", {**common, "input_file_name": "z7.txt", "input_address_type": "HIERNDX",
+                           "input_hier_ndx_system": "Z7", "input_hier_ndx_form": "INT64",
+                           "output_file_name": "z7str.txt", "output_address_type": "HIERNDX",
+                           "output_hier_ndx_system": "Z7", "output_hier_ndx_form": "DIGIT_STRING"})
+        buf = C.create_string_buffer(32)
+        bad = 0
+        for z, (s,) in zip(ids, read_lines("z7str.txt")):
+            n = lib.dg_z7_to_string(z, buf, 32)
+            back = C.c_uint64()
+            ok = n == len(s) and buf.value.decode() == s
+            ok = ok and lib.dg_z7_from_string(s.encode(), len(s), C.byref(back)) == 0 and back.value == z
+            bad += not ok
+        check(bad == 0, f"res {res}: {bad} Z7 strings differ from CLI / don't round trip")
+        print(f"res {res:2d}: {len(ids)} pts -> Z7 ids + strings identical to CLI")
 
-# ---- whole earth: every cell incl. the 12 pentagons ----
-for res in (1, 3):
-    run_cli("gen", {**gen_common, "dggs_res_spec": res, "clip_subset_type": "WHOLE_EARTH"})
-    with open(os.path.join(work, "cells.geojson")) as f:
-        ids = [int(ft["properties"]["name"], 16) for ft in json.load(f)["features"]]
-    compare_cells(f"res {res:2d}: whole earth", ids, pentagons=12)
+        run_cli("gen", {**gen_common, "dggs_res_spec": res, "clip_subset_type": "ADDRESS_FILES",
+                        "clip_region_files": "z7.txt", "input_address_type": "HIERNDX",
+                        "input_hier_ndx_system": "Z7", "input_hier_ndx_form": "INT64"})
+        compare_cells(f"res {res:2d}: {len(ids)} pts", sorted(set(ids)))
 
-lib.dg_ctx_free(ctx)
+    # ---- whole earth: every cell incl. the 12 pentagons ----
+    for res in (1, 3):
+        run_cli("gen", {**gen_common, "dggs_res_spec": res, "clip_subset_type": "WHOLE_EARTH"})
+        with open(os.path.join(work, "cells.geojson")) as f:
+            ids = [int(ft["properties"]["name"], 16) for ft in json.load(f)["features"]]
+        compare_cells(f"res {res:2d}: whole earth", ids, pentagons=12)
+
+    lib.dg_ctx_free(ctx)
+
 print("OK" if fails == 0 else f"{fails} checks FAILED")
 sys.exit(1 if fails else 0)

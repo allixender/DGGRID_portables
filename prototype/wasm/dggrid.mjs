@@ -6,11 +6,15 @@
 // may print warnings, a fatal error calls proc_exit), stubbed below. Works the same in
 // node and in browsers.
 //
-//   const dg = await Igeo7.load(bytes);     // ArrayBuffer / Uint8Array / Response
+//   const dg = await Igeo7.load(bytes);     // ArrayBuffer / Uint8Array / Response, IGEO7v2
+//   const iv = await Igeo7.load(bytes, { preset: PRESET.IVEA7HL });
 //   const ids = dg.geoToZ7(9, [26.729], [58.378]);   // BigUint64Array
 //   dg.z7ToString(ids[0]);                  // "04..."
 //   dg.z7ToCentroid(ids);                   // { lon: Float64Array, lat: Float64Array }
 //   dg.z7ToBoundary(ids);                   // [[[lon, lat], ...], ...] (6 or 5 vertices)
+
+/** DGGRID 9.1 dggs_type presets (include/dggrid.h) */
+export const PRESET = Object.freeze({ IGEO7v2: 0, IGEO7v1: 1, IVEA7HL: 2, IVEA7HS: 3 });
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
@@ -43,8 +47,8 @@ function wasiStubs(getMemory, log) {
 }
 
 export class Igeo7 {
-  /** instantiate dggrid.wasm and create an IGEO7 context */
-  static async load(source, { log = (fd, text) => (fd === 2 ? console.error : console.log)(text.trimEnd()) } = {}) {
+  /** instantiate dggrid.wasm and create a context for one preset (default IGEO7v2) */
+  static async load(source, { preset = PRESET.IGEO7v2, log = (fd, text) => (fd === 2 ? console.error : console.log)(text.trimEnd()) } = {}) {
     let memory;
     const imports = { wasi_snapshot_preview1: wasiStubs(() => memory, log) };
     const { instance } = source instanceof Response
@@ -52,13 +56,13 @@ export class Igeo7 {
       : await WebAssembly.instantiate(source, imports);
     memory = instance.exports.memory;
     instance.exports._initialize();  // C++ static constructors
-    return new Igeo7(instance.exports);
+    return new Igeo7(instance.exports, preset);
   }
 
-  constructor(exports) {
+  constructor(exports, preset = PRESET.IGEO7v2) {
     this.x = exports;
-    this.ctx = exports.dg_igeo7_new();
-    if (!this.ctx) throw new Error(`dg_igeo7_new: ${this.#cstr(exports.dg_last_error(0))}`);
+    this.ctx = exports.dg_preset_new(preset);
+    if (!this.ctx) throw new Error(`dg_preset_new: ${this.#cstr(exports.dg_last_error(0))}`);
   }
 
   free() { this.x.dg_ctx_free(this.ctx); this.ctx = 0; }

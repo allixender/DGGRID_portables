@@ -1,8 +1,9 @@
-// smoke test: DGGRID library (no file IO) -> cell polygon -> GeoArrow WKB array
+// smoke test: DGGRID library (no file IO) -> IGEO7v2 cell polygon (WGS84) -> GeoArrow WKB array
 #include <cstdio>
 #include <sstream>
 #include <iomanip>
 #include <string>
+#include <dglib/DgAuthalicConverter.h>
 #include <dglib/DgIDGGS7H.h>
 #include <dglib/DgGeoSphRF.h>
 #include <dglib/DgPolygon.h>
@@ -11,12 +12,14 @@
 int main() {
   DgRFNetwork net0;
   const DgGeoSphRF& geoRF = *(DgGeoSphRF::makeRF(net0, "GS0"));
-  DgGeoCoord vert0(11.25L, 58.28252559L, false);
-  const DgIDGGS7H& idggs = *DgIDGGS7H::makeRF(net0, geoRF, vert0, 0.0L, 10);
+  DgGeoCoord vert0(11.20, M_ICOSA_VERT0_LAT_DEG, false);  // ISEAL orientation
+  const DgIDGGS7H& idggs = *DgIDGGS7H::makeRF(net0, geoRF, vert0, 0.0, 10);
   const DgIDGG& dgg = idggs.idgg(5);
 
   // Tartu -> cell -> boundary
-  DgLocation* pt = geoRF.makeLocation(DgGeoCoord(26.7290, 58.3780, false));
+  DgGeoCoord tartu(26.7290, 58.3780, false);  // geodetic -> authalic latitude
+  tartu.setLat(DgAuthalic::geodeticToAuthalicLatitude(tartu.lat()));
+  DgLocation* pt = geoRF.makeLocation(tartu);
   dgg.convert(pt);
   DgPolygon verts;
   dgg.setVertices(*pt, verts, 0);
@@ -24,7 +27,7 @@ int main() {
   std::ostringstream wkt; wkt << std::setprecision(10) << "POLYGON ((";
   for (int i = 0; i <= verts.size(); i++) {
     const DgGeoCoord& c = *geoRF.getAddress(verts[i % verts.size()]);
-    wkt << (i ? ", " : "") << c.lonDegs() << " " << c.latDegs();
+    wkt << (i ? ", " : "") << c.lonDegs() << " " << DgAuthalic::authalicToGeodeticLatitude(c.lat()) * M_180_PI;
   }
   wkt << "))";
   std::string s = wkt.str();

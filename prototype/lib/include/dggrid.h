@@ -1,9 +1,10 @@
-/* dggrid.h: prototype IGEO7 library (DGGRID ISEA aperture 7 hexagons + Z7 index).
+/* dggrid.h: prototype IGEO7 library (DGGRID 9.1 aperture 7 hexagon presets + Z7 index).
  *
  * Implemented in dggrid.zig on top of dgcore.cpp (DGGRID). Coordinates are degrees,
- * lon in [-180, 180], lat in [-90, 90]. Batch functions return DG_OK or a negative
- * code, with a message from dg_last_error(ctx). A context is not thread-safe, use one
- * per thread.
+ * lon in [-180, 180], lat in [-90, 90]. Geodetic WGS84 latitudes for the WGS84 presets
+ * (IGEO7v2, IVEA7HL), authalic sphere latitudes for the others. Batch functions return
+ * DG_OK or a negative code, with a message from dg_last_error(ctx). A context is not
+ * thread-safe, use one per thread.
  *
  * Z7 int: bits 60-63 base cell 0-11, then 20 radix-7 digits of 3 bits (res 1 at bits
  * 57-59 ... res 20 at bits 0-2), digits beyond the cell's resolution are 7.
@@ -28,10 +29,24 @@ extern "C" {
 
 typedef struct dg_ctx dg_ctx;
 
-/* IGEO7: vert0 (11.25, 58.28252559), azimuth 0 (= DGGRID dggs_type IGEO7) */
+/* DGGRID 9.1 dggs_type presets. All on the WGS84 authalic sphere, vert0 latitude is the
+ * exact icosahedron vertex 58.28252558853899.., azimuth 0 */
+#define DG_IGEO7V2  0   /* ISEA, WGS84 in/out,  vert0 lon 11.20 (= ISEA7HLZ, upstream IGEO7) */
+#define DG_IGEO7V1  1   /* ISEA, authalic in/out, vert0 lon 11.25 (= ISEA7HSZ, the 8.x IGEO7) */
+#define DG_IVEA7HL  2   /* IVEA, WGS84 in/out,  vert0 lon 11.20 */
+#define DG_IVEA7HS  3   /* IVEA, authalic in/out, vert0 lon 11.25 */
+
+#define DG_PROJ_ISEA 0
+#define DG_PROJ_IVEA 1
+#define DG_DATUM_AUTHALIC 0
+#define DG_DATUM_WGS84    1
+
+dg_ctx* dg_preset_new(int preset);
+/* = dg_preset_new(DG_IGEO7V2) */
 dg_ctx* dg_igeo7_new(void);
-/* ISEA7H + Z7 with another icosahedron orientation */
-dg_ctx* dg_ctx_new(double vert0_lon, double vert0_lat, double azimuth);
+/* another icosahedron orientation. vert0 on the authalic sphere (like the presets' orientation_datum), also
+ * for DG_DATUM_WGS84. vert0_lat NaN: the exact icosahedron vertex latitude */
+dg_ctx* dg_ctx_new(int proj, int datum, double vert0_lon, double vert0_lat, double azimuth);
 void    dg_ctx_free(dg_ctx* ctx);
 /* message of the last error on ctx; ctx == NULL: why the last dg_*_new failed */
 const char* dg_last_error(const dg_ctx* ctx);
