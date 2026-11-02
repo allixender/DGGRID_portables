@@ -116,10 +116,17 @@ def compare_cells(label, ids, pentagons=None):
                 z, a, b = l.strip().split(",")
                 cpts[int(z, 16)] = (float(a), float(b))
     check(set(rings) == set(ids) == set(cpts), f"{label}: CLI generated a different cell set")
+    # cells within 1 deg of a pole separately: near the pole a double build differs from a
+    # long double CLI by up to ca 2.5e-7 deg at res 20 (sqrt(eps) in the projection, ca 3 cm)
     clon, clat = centroids(ids)
-    cmax = max(max(lon_diff(a, cpts[z][0]) * (abs(b) < 89.999), abs(b - cpts[z][1]))
-               for z, a, b in zip(ids, clon, clat))
-    bmax, bad, npent = 0.0, 0, 0
+    cmax = pmax = bmax = 0.0
+    bad = npent = 0
+    for z, a, b in zip(ids, clon, clat):
+        d = max(lon_diff(a, cpts[z][0]) * (abs(b) < 89.999), abs(b - cpts[z][1]))
+        if abs(b) > 89:
+            pmax = max(pmax, d)
+        else:
+            cmax = max(cmax, d)
     for z, poly in zip(ids, boundaries(ids)):
         ring = rings[z]
         npent += len(poly) == 5
@@ -127,13 +134,24 @@ def compare_cells(label, ids, pentagons=None):
             bad += 1
             continue
         for (a, b), (c, d) in zip(poly, ring):
-            bmax = max(bmax, lon_diff(a, c) * (abs(b) < 89.999), abs(b - d))
+            e = max(lon_diff(a, c) * (abs(b) < 89.999), abs(b - d))
+            if abs(b) > 89:
+                pmax = max(pmax, e)
+            else:
+                bmax = max(bmax, e)
     check(cmax < 1e-9, f"{label}: centroid max diff {cmax:.2e} deg vs CLI")
     check(bad == 0 and bmax < 1e-9, f"{label}: {bad} vertex count mismatches, vertex max diff {bmax:.2e}")
+    check(pmax < 1e-6, f"{label}: within 1 deg of a pole max diff {pmax:.2e}")
     if pentagons is not None:
         check(npent == pentagons, f"{label}: {npent} pentagons, expected {pentagons}")
     print(f"{label}: {len(ids)} cells ({npent} pentagons), centroid max diff {cmax:.1e}, "
-          f"boundary max diff {bmax:.1e} deg")
+          f"boundary max diff {bmax:.1e} deg, within 1 deg of a pole {pmax:.1e}")
+
+
+def touches_pole(z, res):
+    """cell centre closer to a pole than 1.5 * the cell's circumradius (hexagon: 0.62 * sqrt(area))"""
+    area_km2 = 510.0656e6 / (10 * 7 ** res + 2)
+    return 90 - abs(centroids([z])[1][0]) < 1.5 * 0.62 * math.sqrt(area_km2) / 111.2
 
 
 # ---- random points: ids, strings, centroids ----
@@ -163,8 +181,17 @@ for preset in presets:
                            "output_hier_ndx_system": "Z7", "output_hier_ndx_form": "INT64"})
         cli_ids = [int(l[0], 16) for l in read_lines("z7.txt")]
         ids = geo_to_z7(res, lons, lats)
+        # an input exactly on a pole lies on a cell edge, a CLI with another float type can
+        # round to the neighbour (other base cell, also other digits at the north pole).
+        # allowed only if both cells reach the pole, then go on with the CLI's id
+        ties = [i for i, (a, b) in enumerate(zip(ids, cli_ids))
+                if a != b and abs(lats[i]) == 90 and touches_pole(a, res) and touches_pole(b, res)]
+        for i in ties:
+            ids[i] = cli_ids[i]
         nd = sum(a != b for a, b in zip(ids, cli_ids))
         check(len(ids) == len(cli_ids) and nd == 0, f"res {res}: {nd} of {len(ids)} Z7 ids differ from CLI")
+        if ties:
+            print(f"res {res:2d}: {len(ties)} exact pole ties")
 
         run_cli("z72str", {**common, "input_file_name": "z7.txt", "input_address_type": "HIERNDX",
                            "input_hier_ndx_system": "Z7", "input_hier_ndx_form": "INT64",

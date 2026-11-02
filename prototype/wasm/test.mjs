@@ -39,6 +39,20 @@ for (const [name, preset] of Object.entries(PRESET)) {
     try { fn(); check(false, `${what}: no error`); } catch (e) { console.log(`${what} -> ${e.message}`); }
   }
 
+  // Arrow C structs on wasm32: same ids + vertices as the raw API, nulls, CRS tag
+  const al = dg.lonLatToZ7Arrow(9, [26.729, NaN, 0], [58.378, NaN, 0]);
+  check(al.format === 'L' && al.name === 'z7' && al.length === 3 && al.nullCount === 1 && al.values[0] === tartu &&
+        (al.nullBitmap[0] & 2) === 0 && (al.nullBitmap[0] & 5) === 5, `arrow ids ${JSON.stringify({ ...al, values: 0 })}`);
+  const rawb = dg.z7ToBoundary([tartu, al.values[2]]);
+  const ap = dg.z7ToPolygonsArrow([tartu, al.values[2]]);
+  const wgs84 = name === 'IGEO7v2' || name === 'IVEA7HL';
+  check(ap.metadata['ARROW:extension:name'] === 'geoarrow.polygon' && ap.length === 2 && ap.polygons[2] === 2 &&
+        ap.rings[1] === 7 && ap.rings[2] === 14 && ap.x[0] === ap.x[6] && ap.y[0] === ap.y[6] &&
+        rawb.flat().every(([x, y], i) => x === ap.x[i < 6 ? i : i + 1] && y === ap.y[i < 6 ? i : i + 1]) &&
+        (ap.metadata['ARROW:extension:metadata'] || '').includes('CRS84') === wgs84,
+        `arrow polygons ${JSON.stringify({ ...ap, x: 0, y: 0 })}`);
+  console.log(`arrow: ids nulls ok, polygons ${ap.format}, ${ap.x.length} coords, ${ap.metadata['ARROW:extension:name']}`);
+
   if (work) {
     const dir = join(work, name);
     const lines = async (f) => (await readFile(join(dir, f), 'utf8')).split('\n').filter((l) => l.trim());

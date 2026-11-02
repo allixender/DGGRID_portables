@@ -51,6 +51,7 @@ extern fn dgc_z7_to_boundary(core: *Core, res: c_int, z7: [*]const u64, n: usize
 
 pub const Ctx = struct {
     core: *Core,
+    datum: c_int,
     err: [256:0]u8 = [_:0]u8{0} ** 256,
 
     fn fail(ctx: *Ctx, code: c_int, comptime fmt: []const u8, args: anytype) c_int {
@@ -136,8 +137,17 @@ export fn dg_ctx_new(proj: c_int, datum: c_int, vert0_lon: f64, vert0_lat: f64, 
         std.heap.c_allocator.destroy(ctx);
         return null;
     };
-    ctx.* = .{ .core = core };
+    ctx.* = .{ .core = core, .datum = datum };
     return ctx;
+}
+
+export fn dg_ctx_datum(ctx: *const Ctx) c_int {
+    return ctx.datum;
+}
+
+/// for dgarrow.c, not part of the public API
+export fn dgz_set_error(ctx: *Ctx, msg: [*:0]const u8) void {
+    _ = ctx.fail(DG_EINVAL, "{s}", .{std.mem.span(msg)});
 }
 
 export fn dg_ctx_free(ctx: ?*Ctx) void {
@@ -399,4 +409,91 @@ test "invalid input is rejected before DGGRID sees it" {
     try testing.expect(dg_preset_new(99) == null);
     try testing.expect(dg_ctx_new(7, 0, 11.2, 58.0, 0.0) == null);
     try testing.expect(std.mem.len(dg_last_error(null)) > 0);
+}
+
+// Arrow C Data Interface round trip through dgarrow.c, consumer side in check_arrow.py
+const ArrowSchema = extern struct {
+    format: ?[*:0]const u8 = null,
+    name: ?[*:0]const u8 = null,
+    metadata: ?[*]const u8 = null,
+    flags: i64 = 0,
+    n_children: i64 = 0,
+    children: ?[*]*ArrowSchema = null,
+    dictionary: ?*ArrowSchema = null,
+    release: ?*const fn (*ArrowSchema) callconv(.c) void = null,
+    private_data: ?*anyopaque = null,
+};
+const ArrowArray = extern struct {
+    length: i64 = 0,
+    null_count: i64 = 0,
+    offset: i64 = 0,
+    n_buffers: i64 = 0,
+    n_children: i64 = 0,
+    buffers: ?[*]?*const anyopaque = null,
+    children: ?[*]*ArrowArray = null,
+    dictionary: ?*ArrowArray = null,
+    release: ?*const fn (*ArrowArray) callconv(.c) void = null,
+    private_data: ?*anyopaque = null,
+};
+extern fn dg_arrow_lonlat_to_z7(ctx: *Ctx, res: c_int, lon_s: *const ArrowSchema, lon: *const ArrowArray, lat_s: *const ArrowSchema, lat: *const ArrowArray, out_s: *ArrowSchema, out: *ArrowArray) c_int;
+extern fn dg_arrow_geo_to_z7(ctx: *Ctx, res: c_int, in_s: *const ArrowSchema, in: *const ArrowArray, out_s: *ArrowSchema, out: *ArrowArray) c_int;
+extern fn dg_arrow_z7_to_points(ctx: *Ctx, z7_s: *const ArrowSchema, z7: *const ArrowArray, encoding: c_int, out_s: *ArrowSchema, out: *ArrowArray) c_int;
+extern fn dg_arrow_z7_to_polygons(ctx: *Ctx, z7_s: *const ArrowSchema, z7: *const ArrowArray, encoding: c_int, out_s: *ArrowSchema, out: *ArrowArray) c_int;
+
+test "arrow: lon/lat -> z7 -> points -> z7, polygons, nulls, errors" {
+    const ctx = dg_preset_new(DG_IGEO7V2) orelse return error.CtxNew;
+    defer dg_ctx_free(ctx);
+
+    var lon = [_]f64{ tartu_lon, 0.0, 0.0 };
+    var lat = [_]f64{ tartu_lat, 0.0, std.math.nan(f64) };
+    lon[2] = std.math.nan(f64); // NaN, NaN -> null
+    var lon_buf = [_]?*const anyopaque{ null, &lon };
+    var lat_buf = [_]?*const anyopaque{ null, &lat };
+    const noop = struct {
+        fn release(_: *ArrowSchema) callconv(.c) void {}
+    };
+    const f64_s = ArrowSchema{ .format = "g", .release = &noop.release }; // released = invalid
+    const lon_a = ArrowArray{ .length = 3, .n_buffers = 2, .buffers = &lon_buf };
+    const lat_a = ArrowArray{ .length = 3, .n_buffers = 2, .buffers = &lat_buf };
+
+    var ids_s = ArrowSchema{};
+    var ids = ArrowArray{};
+    try testing.expectEqual(DG_OK, dg_arrow_lonlat_to_z7(ctx, 9, &f64_s, &lon_a, &f64_s, &lat_a, &ids_s, &ids));
+    defer ids_s.release.?(&ids_s);
+    defer ids.release.?(&ids);
+    try testing.expectEqual(@as(i64, 3), ids.length);
+    try testing.expectEqual(@as(i64, 1), ids.null_count);
+    const vals: [*]const u64 = @ptrCast(@alignCast(ids.buffers.?[1].?));
+    try testing.expectEqual(@as(u64, 0x004252c3ffffffff), vals[0]);
+
+    var pts_s = ArrowSchema{};
+    var pts = ArrowArray{};
+    try testing.expectEqual(DG_OK, dg_arrow_z7_to_points(ctx, &ids_s, &ids, 0, &pts_s, &pts));
+    defer pts_s.release.?(&pts_s);
+    defer pts.release.?(&pts);
+    try testing.expectEqual(@as(i64, 1), pts.null_count);
+
+    var back_s = ArrowSchema{};
+    var back = ArrowArray{};
+    try testing.expectEqual(DG_OK, dg_arrow_geo_to_z7(ctx, 9, &pts_s, &pts, &back_s, &back));
+    defer back_s.release.?(&back_s);
+    defer back.release.?(&back);
+    const back_vals: [*]const u64 = @ptrCast(@alignCast(back.buffers.?[1].?));
+    try testing.expectEqual(vals[0], back_vals[0]);
+    try testing.expectEqual(vals[1], back_vals[1]);
+    try testing.expectEqual(@as(i64, 1), back.null_count);
+
+    var poly_s = ArrowSchema{};
+    var poly = ArrowArray{};
+    try testing.expectEqual(DG_OK, dg_arrow_z7_to_polygons(ctx, &ids_s, &ids, 0, &poly_s, &poly));
+    defer poly_s.release.?(&poly_s);
+    defer poly.release.?(&poly);
+    try testing.expectEqual(@as(i64, 3), poly.length);
+
+    // polygons are not points; outputs stay released on error
+    var err_s = ArrowSchema{};
+    var err_a = ArrowArray{};
+    try testing.expect(dg_arrow_geo_to_z7(ctx, 9, &poly_s, &poly, &err_s, &err_a) != DG_OK);
+    try testing.expect(err_s.release == null and err_a.release == null);
+    try testing.expect(std.mem.indexOf(u8, std.mem.span(dg_last_error(ctx)), "not a point") != null);
 }

@@ -12,6 +12,8 @@
 //   dg.z7ToString(ids[0]);                  // "04..."
 //   dg.z7ToCentroid(ids);                   // { lon: Float64Array, lat: Float64Array }
 //   dg.z7ToBoundary(ids);                   // [[[lon, lat], ...], ...] (6 or 5 vertices)
+//   dg.lonLatToZ7Arrow(9, lon, lat);        // Arrow C structs: { values, nullBitmap, nullCount, .. }
+//   dg.z7ToPolygonsArrow(ids);              // geoarrow.polygon: { rings, polygons, x, y, metadata, .. }
 
 /** DGGRID 9.1 dggs_type presets (include/dggrid.h) */
 export const PRESET = Object.freeze({ IGEO7v2: 0, IGEO7v1: 1, IVEA7HL: 2, IVEA7HS: 3 });
@@ -136,6 +138,108 @@ export class Igeo7 {
     const { lonlat, nverts } = this.z7ToBoundaryRaw(ids);
     return Array.from(nverts, (nv, i) =>
       Array.from({ length: nv }, (_, v) => [lonlat[12 * i + 2 * v], lonlat[12 * i + 2 * v + 1]]));
+  }
+
+  // ---- Arrow C Data Interface, wasm32 layout (pointers 4 bytes, int64 aligned to 8) ----
+  // sizes + offsets: ArrowSchema 48, ArrowArray 64
+
+  #view() { return new DataView(this.x.memory.buffer); }
+
+  // a primitive input array in wasm memory, nothing to release: buffers[0] = no nulls
+  #putPrimitive(pSchema, pArray, pBuffers, pFormat, format, pData, n) {
+    const v = this.#view();
+    new Uint8Array(this.x.memory.buffer, pSchema, 48).fill(0);
+    new Uint8Array(this.x.memory.buffer, pArray, 64).fill(0);
+    new Uint8Array(this.x.memory.buffer, pFormat, 2).set([format.charCodeAt(0), 0]);
+    v.setUint32(pSchema, pFormat, true);
+    v.setUint32(pSchema + 40, 1, true);  // release != NULL = not released, never called on input
+    v.setUint32(pBuffers, 0, true);
+    v.setUint32(pBuffers + 4, pData, true);
+    v.setBigInt64(pArray, BigInt(n), true);
+    v.setBigInt64(pArray + 24, 2n, true);
+    v.setUint32(pArray + 40, pBuffers, true);
+    v.setUint32(pArray + 52, 1, true);
+  }
+
+  #readArray(p) {
+    const v = this.#view();
+    const nBuffers = Number(v.getBigInt64(p + 24, true)), nChildren = Number(v.getBigInt64(p + 32, true));
+    const pb = v.getUint32(p + 40, true), pc = v.getUint32(p + 44, true);
+    return {
+      length: Number(v.getBigInt64(p, true)),
+      nullCount: Number(v.getBigInt64(p + 8, true)),
+      offset: Number(v.getBigInt64(p + 16, true)),
+      buffers: Array.from({ length: nBuffers }, (_, i) => v.getUint32(pb + 4 * i, true)),
+      children: Array.from({ length: nChildren }, (_, i) => this.#readArray(v.getUint32(pc + 4 * i, true))),
+    };
+  }
+
+  #readSchema(p) {
+    const v = this.#view();
+    const name = v.getUint32(p + 4, true), meta = v.getUint32(p + 8, true);
+    let metadata = {};
+    if (meta) {  // int32 count, then int32 length + bytes per key and value
+      const n = v.getInt32(meta, true);
+      let at = meta + 4;
+      const str = () => {
+        const len = v.getInt32(at, true);
+        const t = decoder.decode(new Uint8Array(this.x.memory.buffer, at + 4, len));
+        at += 4 + len;
+        return t;
+      };
+      for (let i = 0; i < n; i++) { const k = str(); metadata[k] = str(); }
+    }
+    return { format: this.#cstr(v.getUint32(p, true)), name: name ? this.#cstr(name) : '', metadata };
+  }
+
+  #copyBitmap(arr) {
+    const p = arr.buffers[0];
+    return p ? new Uint8Array(this.x.memory.buffer, p, Math.ceil((arr.offset + arr.length) / 8)).slice() : null;
+  }
+
+  /** plain lon + lat -> uint64 Arrow array, NaN + NaN = null */
+  lonLatToZ7Arrow(res, lon, lat) {
+    const n = lon.length;
+    return this.#withBuffers([8 * n, 8 * n, 48, 64, 8, 2, 48, 64, 8, 2, 48, 64],
+      (dLon, dLat, sLon, aLon, bLon, fLon, sLat, aLat, bLat, fLat, sOut, aOut) => {
+        new Float64Array(this.x.memory.buffer, dLon, n).set(lon);
+        new Float64Array(this.x.memory.buffer, dLat, n).set(lat);
+        this.#putPrimitive(sLon, aLon, bLon, fLon, 'g', dLon, n);
+        this.#putPrimitive(sLat, aLat, bLat, fLat, 'g', dLat, n);
+        this.#check(this.x.dg_arrow_lonlat_to_z7(this.ctx, res, sLon, aLon, sLat, aLat, sOut, aOut), 'dg_arrow_lonlat_to_z7');
+        const a = this.#readArray(aOut);
+        const out = {
+          ...this.#readSchema(sOut), length: a.length, nullCount: a.nullCount,
+          nullBitmap: this.#copyBitmap(a),
+          values: new BigUint64Array(this.x.memory.buffer, a.buffers[1] + 8 * a.offset, a.length).slice(),
+        };
+        this.x.dg_arrow_release_array(aOut);
+        this.x.dg_arrow_release_schema(sOut);
+        return out;
+      });
+  }
+
+  /** z7 -> geoarrow.polygon, copied out of the Arrow buffers: list<list<struct<x, y>>> */
+  z7ToPolygonsArrow(ids) {
+    const n = ids.length;
+    return this.#withBuffers([8 * n, 48, 64, 8, 2, 48, 64], (dIds, sIn, aIn, bIn, fIn, sOut, aOut) => {
+      this.#putIds(dIds, ids);
+      this.#putPrimitive(sIn, aIn, bIn, fIn, 'L', dIds, n);
+      this.#check(this.x.dg_arrow_z7_to_polygons(this.ctx, sIn, aIn, 0, sOut, aOut), 'dg_arrow_z7_to_polygons');
+      const a = this.#readArray(aOut);
+      const rings = a.children[0], coords = rings.children[0];
+      const [cx, cy] = coords.children;
+      const out = {
+        ...this.#readSchema(sOut), length: a.length, nullCount: a.nullCount,
+        polygons: new Int32Array(this.x.memory.buffer, a.buffers[1] + 4 * a.offset, a.length + 1).slice(),
+        rings: new Int32Array(this.x.memory.buffer, rings.buffers[1] + 4 * rings.offset, rings.length + 1).slice(),
+        x: new Float64Array(this.x.memory.buffer, cx.buffers[1] + 8 * cx.offset, cx.length).slice(),
+        y: new Float64Array(this.x.memory.buffer, cy.buffers[1] + 8 * cy.offset, cy.length).slice(),
+      };
+      this.x.dg_arrow_release_array(aOut);
+      this.x.dg_arrow_release_schema(sOut);
+      return out;
+    });
   }
 
   z7Res(id) { return this.x.dg_z7_res(BigInt(id)); }

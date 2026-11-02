@@ -5,6 +5,7 @@
 //!   zig build dggrid                       CLI from the copy (verification vs upstream)
 //!   zig build bench -- 200000              geo -> Q2DI loop, fatal hook test
 //!   zig build smoke                        dglib cell -> GeoArrow WKB array
+//!   libdggrid / dggrid.wasm also carry dgarrow.c (include/dggrid_arrow.h) + libgeoarrow
 //!   zig build test                         C API tests (dggrid.zig)
 //!   zig build                              + libdggrid shared lib + include/dggrid.h
 //!   zig build -Dtarget=wasm32-wasi         libdglib, bench.wasm (no file IO classes),
@@ -54,37 +55,6 @@ pub fn build(b: *std.Build) void {
     if (b.args) |args| run_bench.addArgs(args);
     b.step("bench", "Run the geo -> Q2DI benchmark (pass N after --)").dependOn(&run_bench.step);
 
-    // ---- libdggrid: public C API (dggrid.zig, include/dggrid.h) over the C++ core
-    // (dgcore.cpp). wasm: a reactor module (no main, _initialize runs the C++ static
-    // constructors) exporting exactly the C API.
-    const api = addApiModule(b, target, optimize, cxx.items, libdg);
-    if (wasm) {
-        api.export_symbol_names = &api_exports;
-        if (optimize != .Debug) api.strip = true;
-        const wasm_lib = b.addExecutable(.{ .name = "dggrid", .root_module = api });
-        wasm_lib.entry = .disabled;
-        wasm_lib.wasi_exec_model = .reactor;
-        b.installArtifact(wasm_lib);
-    } else {
-        b.installArtifact(b.addLibrary(.{ .name = "dggrid", .root_module = api, .linkage = .dynamic }));
-    }
-    b.getInstallStep().dependOn(&b.addInstallFile(b.path("include/dggrid.h"), "include/dggrid.h").step);
-
-    if (wasm) return;
-
-    const tests = b.addTest(.{ .root_module = addApiModule(b, target, optimize, cxx.items, libdg) });
-    b.step("test", "Run the C API tests").dependOn(&b.addRunArtifact(tests).step);
-
-    // ---- dggrid CLI from the patched copy, to verify the rewrite against upstream
-    const climod = b.createModule(.{ .target = target, .optimize = optimize, .link_libcpp = true });
-    for (dg_includes) |p| climod.addIncludePath(b.path(p));
-    climod.addCSourceFiles(.{ .files = globSorted(b, dg ++ "/lib/dgaplib/lib", ".cpp", false), .flags = cxx.items });
-    climod.addCSourceFiles(.{ .files = globSorted(b, dg ++ "/apps/dggrid", ".cpp", false), .flags = cxx.items });
-    climod.linkLibrary(libdg);
-    const cli = b.addExecutable(.{ .name = "dggrid", .root_module = climod });
-    const install_cli = b.addInstallArtifact(cli, .{});
-    b.step("dggrid", "Build the dggrid CLI from the patched copy").dependOn(&install_cli.step);
-
     // ---- libgeoarrow (C99 + vendored nanoarrow, namespaced so it can sit next to
     // pyarrow or another nanoarrow copy)
     const cfg = b.addConfigHeader(.{ .style = .{ .cmake = b.path(ga ++ "/geoarrow/geoarrow_config.h.in") }, .include_path = "geoarrow/geoarrow_config.h" }, .{
@@ -96,8 +66,7 @@ pub fn build(b: *std.Build) void {
         .GEOARROW_USE_RYU_DEFINE = "#define GEOARROW_USE_RYU 1",
         .GEOARROW_NAMESPACE_DEFINE = "#define GEOARROW_NAMESPACE DgGeoArrow",
     });
-    const ga_def = "-DNANOARROW_NAMESPACE=DgGeoArrowNanoarrow";
-    const gamod = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true, .link_libcpp = true });
+    const gamod = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true, .link_libcpp = true, .pic = if (wasm) null else true });
     gamod.addConfigHeader(cfg);
     gamod.addIncludePath(b.path(ga));
     gamod.addIncludePath(b.path(ga ++ "/vendor"));
@@ -112,6 +81,40 @@ pub fn build(b: *std.Build) void {
     gamod.addCSourceFiles(.{ .root = b.path(ga ++ "/vendor/nanoarrow"), .files = &.{"nanoarrow.c"}, .flags = &.{ "-std=c99", ga_def } });
     const libga = b.addLibrary(.{ .name = "geoarrow", .root_module = gamod });
     b.installArtifact(libga);
+    const ga_lib = GaLib{ .lib = libga, .cfg = cfg };
+
+
+    // ---- libdggrid: public C API (dggrid.zig, include/dggrid.h) over the C++ core
+    // (dgcore.cpp). wasm: a reactor module (no main, _initialize runs the C++ static
+    // constructors) exporting exactly the C API.
+    const api = addApiModule(b, target, optimize, cxx.items, libdg, ga_lib);
+    if (wasm) {
+        api.export_symbol_names = &api_exports;
+        if (optimize != .Debug) api.strip = true;
+        const wasm_lib = b.addExecutable(.{ .name = "dggrid", .root_module = api });
+        wasm_lib.entry = .disabled;
+        wasm_lib.wasi_exec_model = .reactor;
+        b.installArtifact(wasm_lib);
+    } else {
+        b.installArtifact(b.addLibrary(.{ .name = "dggrid", .root_module = api, .linkage = .dynamic }));
+    }
+    b.getInstallStep().dependOn(&b.addInstallFile(b.path("include/dggrid.h"), "include/dggrid.h").step);
+    b.getInstallStep().dependOn(&b.addInstallFile(b.path("include/dggrid_arrow.h"), "include/dggrid_arrow.h").step);
+
+    if (wasm) return;
+
+    const tests = b.addTest(.{ .root_module = addApiModule(b, target, optimize, cxx.items, libdg, ga_lib) });
+    b.step("test", "Run the C API tests").dependOn(&b.addRunArtifact(tests).step);
+
+    // ---- dggrid CLI from the patched copy, to verify the rewrite against upstream
+    const climod = b.createModule(.{ .target = target, .optimize = optimize, .link_libcpp = true });
+    for (dg_includes) |p| climod.addIncludePath(b.path(p));
+    climod.addCSourceFiles(.{ .files = globSorted(b, dg ++ "/lib/dgaplib/lib", ".cpp", false), .flags = cxx.items });
+    climod.addCSourceFiles(.{ .files = globSorted(b, dg ++ "/apps/dggrid", ".cpp", false), .flags = cxx.items });
+    climod.linkLibrary(libdg);
+    const cli = b.addExecutable(.{ .name = "dggrid", .root_module = climod });
+    const install_cli = b.addInstallArtifact(cli, .{});
+    b.step("dggrid", "Build the dggrid CLI from the patched copy").dependOn(&install_cli.step);
 
     // ---- smoke: dglib cell -> WKT -> GeoArrow WKB array
     var smoke_flags: std.ArrayList([]const u8) = .empty;
@@ -127,10 +130,15 @@ pub fn build(b: *std.Build) void {
 
 const api_exports = [_][]const u8{
     "dg_igeo7_new",      "dg_preset_new",      "dg_ctx_new",        "dg_ctx_free",
-    "dg_last_error",
+    "dg_last_error",     "dg_ctx_datum",
+    "dg_arrow_geo_to_z7", "dg_arrow_lonlat_to_z7", "dg_arrow_z7_to_points", "dg_arrow_z7_to_polygons",
+    "dg_arrow_release_schema", "dg_arrow_release_array",
     "dg_geo_to_z7",      "dg_z7_to_centroid",  "dg_z7_to_boundary", "dg_z7_res",
     "dg_z7_to_string",   "dg_z7_from_string",  "dg_alloc",          "dg_free",
 };
+
+const GaLib = struct { lib: *std.Build.Step.Compile, cfg: *std.Build.Step.ConfigHeader };
+const ga_def = "-DNANOARROW_NAMESPACE=DgGeoArrowNanoarrow";
 
 fn addApiModule(
     b: *std.Build,
@@ -138,6 +146,7 @@ fn addApiModule(
     optimize: std.builtin.OptimizeMode,
     flags: []const []const u8,
     libdg: *std.Build.Step.Compile,
+    ga_lib: GaLib,
 ) *std.Build.Module {
     const mod = b.createModule(.{
         .root_source_file = b.path("dggrid.zig"),
@@ -148,6 +157,13 @@ fn addApiModule(
     for (dg_includes) |p| mod.addIncludePath(b.path(p));
     mod.addCSourceFile(.{ .file = b.path("dgcore.cpp"), .flags = flags });
     mod.linkLibrary(libdg);
+    // dgarrow.c: Arrow C Data + GeoArrow over dggrid.h, no DGGRID classes
+    mod.addIncludePath(b.path("include"));
+    mod.addConfigHeader(ga_lib.cfg);
+    mod.addIncludePath(b.path(ga));
+    mod.addIncludePath(b.path(ga ++ "/vendor"));
+    mod.addCSourceFile(.{ .file = b.path("dgarrow.c"), .flags = &.{ "-std=c99", ga_def } });
+    mod.linkLibrary(ga_lib.lib);
     return mod;
 }
 
