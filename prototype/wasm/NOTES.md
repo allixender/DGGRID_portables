@@ -5,6 +5,14 @@
 - `dggrid.wasm` -> the IGEO7 C API as a reactor module (no main, `_initialize` runs the C++ static ctors), exports exactly `dg_*` + memory. `dggrid.mjs` = JS wrapper, `node test.mjs <dggrid.wasm> [check_cli workdir]` = test + bench
 - `bench.wasm` -> WASI command (geo -> Q2DI loop), `node run.mjs bench.wasm 200000`
 
+## update 2026-11-02, DGGRID 9.1
+
+- builds unchanged, no new WASI imports, 780 KB stripped ReleaseFast (205 KB gzip). `Igeo7.load(bytes, { preset: PRESET.IVEA7HL })`, default IGEO7v2. numbers below this section = 2026-10-02, 8.x sphere grid
+- test.mjs vs root CLI, 4 presets: res 20 ids identical except exact pole ties, whole earth res 3 within 6.1e-12 deg
+- IGEO7v2, 200k pts res 9, derived from the cumulative timings: geo -> Z7 207k/s, Z7 -> centroid ca 480k/s, Z7 -> boundary ca 140k/s. native 397k / 751k / 170k
+- long double (quad) mode, same checks OK, ca 9.5k pts/s, 22x slower -> stays a check, not a build to use
+- 9.1 `DgAuthalic` inverse converges on musl double (8 * DBL_EPSILON tolerance) -> no trap in WGS84 mode. 0102 gone, upstream atan2l gives the same hash
+
 ## dggrid.wasm + dggrid.mjs (JS API)
 
 - imports only 8 WASI functions (environ_*, fd_write/read/seek/close, fd_fdstat_get, proc_exit) -> dggrid.mjs stubs them itself, fd_write -> console, proc_exit (= DGGRID fatal) -> JS Error. no WASI runtime / shim lib needed, same code node + browser (`Igeo7.load(fetch(...))` via instantiateStreaming)

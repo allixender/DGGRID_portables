@@ -322,6 +322,38 @@ goal: build more than the pinned master commit, eg. tag v8.44 + dev branch v91b,
 - published 2026-10-31: PR #18 merged (b974d25), push run 41215657657 -> `edge` = 9.1 @ 4f8bf61. tag `v9.1` run 41218034036: ubsan + 8 tests 39/39, 7 archives + `SHA256SUMS` ok, BUILDINFO lists `patches/v9.1/0001` + `0002`. `--latest` set by hand, v8.44 off "Latest", `releases/latest` = v9.1
 - watchdog dispatch on b974d25 (run 41232253645) green, no new PR -> master pinned = upstream, v91b out of the loop
 
+## 2026-11-02 prototype on 9.1 (branch `proto/lib-v9.1`, local only)
+
+proto/lib-dgreal + origin/notes/v9.1-release merged, submodule on 4f8bf61
+
+### what 9.1 changed for the lib
+
+- IGEO7 = alias for IGEO7v2 = ISEA7HLZ. all presets on the authalic sphere, L = WGS84 geodetic lat in/out + ISEAL orientation (vert0 lon 11.20), S = authalic + ISEA (11.25). vert0 lat now exact 58.28252558853899.., was 58.28252559. old `dg_igeo7_new` constants -> a grid nobody has any more, tests still passed on it
+- API: `dg_preset_new` (IGEO7v2, IGEO7v1, IVEA7HL, IVEA7HS), `dg_ctx_new(proj, datum, lon, lat, az)`, core via `DgIDGGSBase::makeRF(.., Z7)` = CLI path, lat through `DgAuthalic` per value. Tartu res 9 `004252c3..` (v2), `0042c499..` (v1 = old 8.x id), `0042c50d..` (IVEA7HL)
+- IVEA7HL has no Z in the name, CLI builds Z7 on demand, ids == IVEA7HLZ
+- `0102` obsolete, upstream coordtrans = atan2l -> deleted. bench hash native == wasm double without it
+- `dgreal.py`: 9.1 math `atanhl log1pl hypotl copysignl` etc + `LDBL_MAX/MIN/EPSILON`, without them double mode would still call long double math in the authalic + slice-dice code
+- `setup_src.sh`: archive of the gitlink commit, not submodule HEAD -> a `use_line.sh` switch can't leak in
+- pole input: `90 * M_PI_180` vs DgAuthalic's pi/2 check -> poles passed in exact
+
+### results
+
+- API vs unmodified root CLI, 4 presets, res 0-20, 3005 pts + whole earth res 1, 3: ids + strings identical, geometry within 5.1e-13 deg (print precision). details prototype/lib/README.md
+- 39 examples, 196 files: rewrite long double byte-identical to upstream aarch64 + x86_64
+- 7 targets x 2 real types build, smoke + bench run in podman aarch64-linux-musl (quad too), hash same
+- wasm: 4 presets OK, IGEO7v2 207k pts/s, native 397k
+- found by fuzz: Z7 ids in a pentagon's deleted sub-sequence (`002`) -> DGGRID decodes them to another cell, silently (`002` centroid = `006`). rejected in dggrid.zig now. CLI not checked for this as input -> tell Kevin? TODO in DgZ7System says so already
+
+### UPSTREAM/RELEASE: macos-x86_64 under Rosetta, WGS84 presets fatal
+
+- `FATAL ERROR: DgAuthalic::authalicToGeodeticLatitude: inverse did not converge`, res 0 already. IGEO7, IGEO7v2, IVEA7HL. spherical presets fine. wholeEarthIGEO7, icosaISEAL -> 37/39 examples
+- published v9.1 `dggrid-macos-x86_64` affected (sha256 2591023.. == local root build, run directly). universal binary on arm picks arm64, only `arch -x86_64` hits it
+- native Intel OK: same asset in macos-15-intel job run 41218034036, wholeEarthIGEO7 3432 cells -> CI can't see this. rosetta x87 emulation, no Intel mac here to compare libm values directly
+- my first guess musl-like double precision log1pl (patches/0002) wrong: rosetta probe vs exact series, `log1pl` <= 0.6 ulp, `atanhl` up to 45 ulp at x = 0.0033, 5.5 at 0.012-0.05 (64 bit ulp). `8 * LDBL_EPSILON` too tight for that -> Newton never stops
+- sweep 200k beta in (0, 90): 25010 no convergence (12.5%), first one at the very small end. range of the rest not chased
+- `-Ddgreal=double` on x86_64 under rosetta: 0 failures, 39/39
+- not patched, patches/ = release track + separate decision. candidate = stall criterion instead of tolerance by digits, would replace `patches/0002` too -> same thing to tell Kevin
+
 ## open / next (state 2026-10-02 end of day)
 
 done today: repo + CI + edge release (PR #1), windows-x86_64 fixes (PR #2), precision probe kept for reference (PR #3, `precision.yml` manual / `probe/**` only). all feature branches merged + deleted, windows host session decommissioned (rented dept workstation, nothing permanent there)
@@ -332,7 +364,8 @@ next, roughly by priority:
 - upstream (Kevin): `patches/0001-output-streams-binary-mode.patch`; MSVC template fixes (`::DgDiscTopoRF` in DgDiscTopoRFS.h:313, DgRF.hpp:308) as `patches/0002`, `0003`; long double precision typedef (perf everywhere + aarch64-linux)
 - zig: report libc++ `ostream << long double` on mingw ucrt (ANSI_STDIO not reaching zig-built libc++) -> drop `src/mingw_ldouble_numput.cpp` once fixed
 - upstream lines (state 2026-10-31): master -> `edge` (9.1 @ 4f8bf61), fixed `v9.1` (Latest) + `v8.44`, no dev line right now. Kevin: authalic inverse on quad long double (`patches/0002`), windows `output_last_seqnum` 32 bit limit, #107 windows test of the SEQNUM fix still open
-- CLAUDE.md lives on proto/lib-dgreal only, still says v91b -> merge main there, update lines paragraph, check `prototype/lib/setup_src.sh` on 9.1
+- macos-x86_64 under Rosetta, WGS84 presets fatal (2026-11-02 section) -> release notes known issue? stall criterion patch? Kevin
+- CLAUDE.md lives on proto/lib-v9.1 + proto/lib-dgreal only, updated on proto/lib-v9.1
 - macos gatekeeper / notarisation (cf. CODESIGNING.md in fork)
 - aarch64-linux perf on a real arm runner (VM measured 35-45x vs mac)
-- geoarrow: C API / writer on top of libdglib + libgeoarrow (`prototype/lib-geoarrow-smoke/`), library builds as separate track
+- geoarrow: C API on 9.1 done for raw buffers (proto/lib-v9.1), Arrow / GeoArrow in + out still smoke only (`prototype/lib/smoke.cpp`, via WKT)
