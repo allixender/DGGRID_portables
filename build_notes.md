@@ -344,7 +344,26 @@ proto/lib-dgreal + origin/notes/v9.1-release merged, submodule on 4f8bf61
 - wasm: 4 presets OK, IGEO7v2 207k pts/s, native 397k
 - found by fuzz: Z7 ids in a pentagon's deleted sub-sequence (`002`) -> DGGRID decodes them to another cell, silently (`002` centroid = `006`). rejected in dggrid.zig now. CLI not checked for this as input -> tell Kevin? TODO in DgZ7System says so already
 
-### UPSTREAM/RELEASE: macos-x86_64 under Rosetta, WGS84 presets fatal
+### karula native x86_64 (work in `bin/proto-v9.1/` there, old binaries left alone)
+
+- zig 0.16 gnu + musl + gcc 16 upstream as oracles. long double API vs gcc CLI: 0 fails, 0 ties. rewrite byte-identical, 39/39 all builds. `zig build test` gnu + musl both real types
+- double API vs 80-bit CLI: 3003 of 3005 pts same ids at res 0-20, 4 presets, geometry 5e-12 deg. first run looked bad, 2 reasons, both pole:
+  - exact pole inputs (0,90), (180,-90) sit on cell edges -> rounding picks the neighbour, other base cell, at the north pole other digits too (`0a69..` vs `169a..`). so mac arm vs karula CLI also differ there. only these 2 points ever. `check_cli.py`: tie allowed only if both cells reach the pole
+  - within 1 deg of a pole double vs x87 up to 2.4e-7 deg at res 20, ca 3 cm. split out in `check_cli.py`, own tolerance 1e-6, elsewhere stays 1e-9
+- mac arm64 CLI vs karula gcc CLI directly, res 20 ids + whole earth res 3: same cell sets, 5e-12 deg, ids only at the poles
+- bench hash `b90723bb9bf21ffb` mac, karula both real types, wasm. x87 long double 83k pts/s vs double 550k -> 6.6x, double is what the lib should ship with
+- wasm on node 22 vs 80-bit CLI OK
+
+### Arrow + GeoArrow (`include/dggrid_arrow.h`, `dgarrow.c`)
+
+- points in (struct, interleaved, WKB, WKT, plain lon + lat float64/32) -> uint64 z7 -> points / polygons out, same encodings. nulls, slices, int64 ids, errors. details prototype/lib/README.md
+- geoarrow-c generic `GeoArrowArrayReader` / `GeoArrowArrayWriter` = one visitor path for every encoding, no fast path needed: 389k/s vs raw 397k. not via WKT any more
+- `check_arrow.py`: pyarrow + geoarrow-pyarrow, shapely, geopandas 1.2 as independent reader + writer. mac + karula (python 3.13 / 3.14, pyarrow 26), double + long double OK. max rss flat over 50 round trips
+- CRS guard, 2 wrong tries: substring `4326` + `GeographicCRS` let EPSG:3857 through (PROJJSON base_crs has both) -> depth aware scan of the top level `type`. PROJJSON comes as JSON object or escaped string (`with_crs(str)`) -> `GeoArrowUnescapeCrs` first, decide on the content, not crs_type
+- nanoarrow rejects schemas with release NULL -> hand built inputs need any non NULL (wasm + zig test)
+- polygons = CLI WRAP vertices, antimeridian + polar cells wrong in planar lon/lat, sample 34 of 6000 -> unwrap option next?
+
+### macos-x86_64 under Rosetta, WGS84 presets fatal (not chased, decision 2026-11-02: mac arm + linux amd native are the reference)
 
 - `FATAL ERROR: DgAuthalic::authalicToGeodeticLatitude: inverse did not converge`, res 0 already. IGEO7, IGEO7v2, IVEA7HL. spherical presets fine. wholeEarthIGEO7, icosaISEAL -> 37/39 examples
 - published v9.1 `dggrid-macos-x86_64` affected (sha256 2591023.. == local root build, run directly). universal binary on arm picks arm64, only `arch -x86_64` hits it
@@ -364,8 +383,7 @@ next, roughly by priority:
 - upstream (Kevin): `patches/0001-output-streams-binary-mode.patch`; MSVC template fixes (`::DgDiscTopoRF` in DgDiscTopoRFS.h:313, DgRF.hpp:308) as `patches/0002`, `0003`; long double precision typedef (perf everywhere + aarch64-linux)
 - zig: report libc++ `ostream << long double` on mingw ucrt (ANSI_STDIO not reaching zig-built libc++) -> drop `src/mingw_ldouble_numput.cpp` once fixed
 - upstream lines (state 2026-10-31): master -> `edge` (9.1 @ 4f8bf61), fixed `v9.1` (Latest) + `v8.44`, no dev line right now. Kevin: authalic inverse on quad long double (`patches/0002`), windows `output_last_seqnum` 32 bit limit, #107 windows test of the SEQNUM fix still open
-- macos-x86_64 under Rosetta, WGS84 presets fatal (2026-11-02 section) -> release notes known issue? stall criterion patch? Kevin
 - CLAUDE.md lives on proto/lib-v9.1 + proto/lib-dgreal only, updated on proto/lib-v9.1
 - macos gatekeeper / notarisation (cf. CODESIGNING.md in fork)
 - aarch64-linux perf on a real arm runner (VM measured 35-45x vs mac)
-- geoarrow: C API on 9.1 done for raw buffers (proto/lib-v9.1), Arrow / GeoArrow in + out still smoke only (`prototype/lib/smoke.cpp`, via WKT)
+- geoarrow: C API + Arrow / GeoArrow in + out on 9.1 done (proto/lib-v9.1), next list in prototype/lib/README.md

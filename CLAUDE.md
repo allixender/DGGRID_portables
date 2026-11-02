@@ -43,7 +43,8 @@ To run a single example, cd into `DGGRID/examples/<name>` (or a scratch copy, si
 - **`prototype/`**: experiments that are not part of the release build.
   - `prototype/lib/` is the library build (libdglib + namespaced libgeoarrow, also wasm32-wasi). It works on its own patched plain copy of the sources, `prototype/lib/.src/` (gitignored), created by `prototype/lib/setup_src.sh`.
   - That copy gets `patches/*`, then the prototype-only `prototype/lib/patches/*.patch`, then the `dgreal.py` rewrite (`long double` -> `dgreal` typedef, `-Ddgreal=double`).
-  - C API: 9.1 presets IGEO7v2 (default), IGEO7v1, IVEA7HL, IVEA7HS + Z7 ids, point <-> cell, centroid, boundary. `check_cli.py` compares it against the root build's CLI.
+  - C API: 9.1 presets IGEO7v2 (default), IGEO7v1, IVEA7HL, IVEA7HS + Z7 ids, point <-> cell, centroid, boundary. `check_cli.py` compares it against the root build's CLI. Arrow C Data + GeoArrow on top: `include/dggrid_arrow.h`, `dgarrow.c`, consumer test `check_arrow.py`.
+  - Reference platforms for the library: mac arm64 native and linux x86_64 native (`ssh karula`, under `~/dev/build/DGGRID_portable_tests/bin/proto-v9.1/`, needs VPN). Rosetta results don't count.
   - Never apply prototype patches to the `DGGRID/` submodule. `ci/apply_patches.sh <src-dir> <patch-dir>...` targets other trees.
   - Findings: `prototype/lib/README.md`, `prototype/wasm/NOTES.md`.
 
@@ -52,5 +53,4 @@ To run a single example, cd into `DGGRID/examples/<name>` (or a scratch copy, si
 - Upstream `examples/sampleOutput` is **not** a valid byte oracle. It was generated with x87 80-bit long double, and it doesn't even match upstream's own gcc build. Last-digit float differences across platforms are expected, because `LDBL_MANT_DIG` is 64 on x86_64, 53 on aarch64 macOS/Windows and 113 (software quad) on aarch64 Linux. Integer, cell ID and topology differences are real bugs.
 - A return code of 0 is not enough. The Windows x86_64 zero-coordinate bug passed every rc-only check. Compare values across platforms using the `outputs-<line>-<platform>-<runner>` CI artifacts (`gh run download`).
 - Known open issue: Windows arm64 prints `%LF` with wrong rounding (UCRT printf, not libm). It is parked, and the edge release notes list it.
-- Known open issue: `macos-x86_64` under Rosetta dies on every WGS84 preset (IGEO7, IGEO7v2, *L), `inverse did not converge`. Native Intel is fine, so CI is green. See build_notes.md, 2026-11-02.
 - On Windows checkouts, use `core.autocrlf false`, otherwise the CRLF `.meta` files and scripts break.

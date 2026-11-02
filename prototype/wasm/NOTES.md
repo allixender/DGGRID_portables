@@ -13,6 +13,9 @@
 - long double (quad) mode, same checks OK, ca 9.5k pts/s, 22x slower -> stays a check, not a build to use
 - 9.1 `DgAuthalic` inverse converges on musl double (8 * DBL_EPSILON tolerance) -> no trap in WGS84 mode. 0102 gone, upstream atan2l gives the same hash
 
+- Arrow + GeoArrow in dggrid.wasm too: 939 KB (262 KB gzip). `lonLatToZ7Arrow`, `z7ToPolygonsArrow` read the C structs by hand (wasm32: ArrowSchema 48 bytes, ArrowArray 64), checked in test.mjs. input schema `release` = 1 (non NULL = not released, never called). `dg_arrow_release_*` because JS can't call the callback directly
+- also vs the 80-bit gcc CLI on karula: same result, pole ties only, 5.1e-12 deg
+
 ## dggrid.wasm + dggrid.mjs (JS API)
 
 - imports only 8 WASI functions (environ_*, fd_write/read/seek/close, fd_fdstat_get, proc_exit) -> dggrid.mjs stubs them itself, fd_write -> console, proc_exit (= DGGRID fatal) -> JS Error. no WASI runtime / shim lib needed, same code node + browser (`Igeo7.load(fetch(...))` via instantiateStreaming)
@@ -61,5 +64,5 @@
 
 - process exit crash (command modules only, bench.wasm): `RuntimeError: null function or function signature mismatch` in `__funcs_on_exit` <- `__wasm_call_dtors` <- `_start`, after main returned. only once an IDGGS was built (`DgRFNetwork` + `DgGeoSphRF` alone exit clean, plain static std::string + atexit test programs too). no dglib atexit calls, no linker warnings. dggrid.wasm is a reactor, never runs exit handlers -> irrelevant for the lib, not chased. command outputs need `fflush(stdout)` before return
 - browser demo page (map click -> cell + hexagon), not done yet. dggrid.mjs should work as is
-- Arrow C data structs from linear memory for JS (arrow-js-ffi as in geoarrow-wasm?), untested
+- arrow-js-ffi instead of the struct reader in dggrid.mjs, untested
 - wasm-opt not tried
