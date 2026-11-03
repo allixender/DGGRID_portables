@@ -46,6 +46,7 @@ To run a single example, cd into `DGGRID/examples/<name>` (or a scratch copy, si
   - C API: 9.1 presets IGEO7v2 (default), IGEO7v1, IVEA7HL, IVEA7HS + Z7 ids, point <-> cell, centroid, boundary. `check_cli.py` compares it against the root build's CLI. Arrow C Data + GeoArrow on top: `include/dggrid_arrow.h`, `dgarrow.c`, consumer test `check_arrow.py`.
   - Reference platforms for the library: mac arm64 native and linux x86_64 native (`ssh karula`, under `~/dev/build/DGGRID_portable_tests/bin/proto-v9.1/`, needs VPN). Rosetta results don't count.
   - Never apply prototype patches to the `DGGRID/` submodule. `ci/apply_patches.sh <src-dir> <patch-dir>...` targets other trees.
+  - `prototype/demo/`: stub Python (ctypes) + browser (wasm) bindings and demos. `copy_libs.sh` copies the built `libdggrid` / `dggrid.wasm` + `dggrid.mjs` in (gitignored), nothing is built there.
   - Findings: `prototype/lib/README.md`, `prototype/wasm/NOTES.md`.
 
 ## Testing caveats

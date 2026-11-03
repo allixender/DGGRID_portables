@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IGEO7 wasm demo</title>
+<style>
+  :root { --bg: #fbfbf9; --fg: #1d1d1b; --muted: #6b6b66; --line: #8a8f99; --cell: #d9480f; --pole: #c2255c; --land: #e6e4dc; --panel: #f1f0eb; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #17181a; --fg: #e8e6e1; --muted: #9a9890; --line: #5d6370; --cell: #ff8a4c; --pole: #f06595; --land: #2a2c2f; --panel: #202124; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 12px; color: var(--muted); }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-bottom: 10px; }
+  label { display: inline-flex; gap: 6px; align-items: center; }
+  input[type=number] { width: 7em; }
+  select, input, button { font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px; }
+  button { cursor: pointer; }
+  #map { width: 100%; height: auto; display: block; background: var(--bg); border: 1px solid var(--line); cursor: crosshair; }
+  .land { fill: var(--land); stroke: none; }
+  .grat { fill: none; stroke: var(--line); stroke-opacity: .35; stroke-width: .6; vector-effect: non-scaling-stroke; }
+  .grid { fill: none; stroke: var(--line); stroke-width: .7; vector-effect: non-scaling-stroke; }
+  .pole { fill: none; stroke: var(--pole); stroke-width: 1.4; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+  .hit { fill: var(--cell); fill-opacity: .35; stroke: var(--cell); stroke-width: 1.6; vector-effect: non-scaling-stroke; }
+  .pt { fill: var(--fg); }
+  .row { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 12px; margin-top: 12px; }
+  @media (max-width: 760px) { .row { grid-template-columns: minmax(0, 1fr); } }
+  pre { margin: 0; padding: 10px; background: var(--panel); border-radius: 4px; overflow-x: auto; font: 12px/1.45 ui-monospace, monospace; white-space: pre-wrap; }
+  #detail { width: 100%; height: auto; background: var(--panel); border-radius: 4px; }
+  .legend { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .legend span { white-space: nowrap; margin-right: 12px; }
+</style>
+</head>
+<body>
+<h1>IGEO7 in the browser</h1>
+<p class="sub">DGGRID 9.1 compiled to <code>dggrid.wasm</code>, used through <code>dggrid.mjs</code>. Click the map for the cell under the cursor.</p>
+
+<div class="controls">
+  <label>preset <select id="preset">
+    <option>IGEO7v2</option><option>IGEO7v1</option><option>IVEA7HL</option><option>IVEA7HS</option>
+  </select></label>
+  <label>grid res <select id="gridRes"><option>0</option><option>1</option><option selected>2</option><option>3</option><option>4</option></select></label>
+  <label>query res <input id="res" type="number" min="0" max="20" value="5"></label>
+  <label>lon <input id="lon" type="number" step="any" value="26.729"></label>
+  <label>lat <input id="lat" type="number" step="any" value="58.378"></label>
+  <button id="go">locate</button>
+  <button id="bench">benchmark</button>
+  <button id="arrow">Arrow</button>
+</div>
+
+<svg id="map" viewBox="-180 -90 360 180" preserveAspectRatio="xMidYMid meet" role="img" aria-label="world map with the IGEO7 grid">
+  <g transform="scale(1,-1)">
+    <g id="land"></g>
+    <path id="grat" class="grat"></path>
+    <path id="grid" class="grid"></path>
+    <path id="poles" class="pole"></path>
+    <path id="hit" class="hit"></path>
+    <circle id="pt" class="pt" r="0.9" cx="0" cy="0" visibility="hidden"></circle>
+  </g>
+</svg>
+<div class="legend">
+  <span>grey: grid cells (UNWRAP_EAST rings, cells past 180° drawn again at −360°)</span>
+  <span style="color:var(--pole)">dashed: the 4 pole cells, an edge runs through the pole, not valid as planar lon/lat polygons</span>
+</div>
+
+<div class="row">
+  <pre id="out">loading dggrid.wasm …</pre>
+  <div>
+    <svg id="detail" viewBox="0 0 280 280" aria-label="selected cell"></svg>
+    <div class="legend">selected cell, local equirectangular view, vertex numbers in ring order</div>
+  </div>
+</div>
+
+<script type="module" src="./main.js"></script>
+</body>
+</html>

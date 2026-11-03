@@ -1,0 +1,4 @@
+# copied by copy_libs.sh
+python/igeo7/_lib/
+web/dggrid.wasm
+web/dggrid.mjs
