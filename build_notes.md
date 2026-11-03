@@ -365,6 +365,18 @@ proto/lib-dgreal + origin/notes/v9.1-release merged, submodule on 4f8bf61
 - the 4 left at every res = 2 per pole, shared edge through the pole. needs pole vertices, not a shift, open
 - only polygons unwrap. `unwrap_points` would put centroids at 191.2 and `dg_geo_to_z7` refused > 180 -> centroids stay normal, point input takes +-360 and normalises
 
+### Z7 topology, 2026-11-03 (`z7.zig`: neighbours, children, parent)
+
+- reviewed 3 downloaded refs (`prototype/ext/`, gitignored): z7py (Apache-2.0), z7_julia, its C++ source (wrenoud/Z7). Julia = line by line port of the C++, z7py of the Julia. same tables + steps, same output (6 slots, GBT direction order, UINT64_MAX gap)
+- ran z7py (numba) + both Julia variants on all 196,092 cells res 0-5 -> 0 slot differences to the zig port. C++ not built, `BitFieldProxy.h` missing from the download
+- refs: no input validation at all, C++ 2 unchecked table / shift indices (pole_0 row/col, first_non_zero 21), py/jl guard them. upstream neighbour test only subset + res 2-3 + 8.x ISEA7H
+- zig, not C/C++: pure u64 arithmetic, sits next to the existing `z7Res` validation, comptime tables, ReleaseSafe traps the C++ edge cases, wasm for free. C++ layer stays DGGRID only
+- oracle = 9.1 CLI `neighbor_output_type` / `children_output_type`, whole earth res 0-6 all 4 presets: equal sets. CLI children = 13 (pentagon 11) = interior 7 (6) first = the Z7 index children, then the 6 (5) res + 1 cells straddling the edge
+- res 7-20 without CLI: neighbours share exactly 2 vertices with the cell + symmetric, all presets
+- topology preset independent (same ids, same neighbours ISEA / IVEA, L / S)
+- 14.6M neighbour sets/s raw, 11.3M/s as Arrow fixed_size_list[6], wasm +17 KB
+- the "suspicious" exclusion zone step (ref cell's exclusion digit applied to neighbours in another base cell): fine, the CLI agrees everywhere up to res 6
+
 ### macos-x86_64 under Rosetta, WGS84 presets fatal (not chased, decision 2026-11-02: mac arm + linux amd native are the reference)
 
 - `FATAL ERROR: DgAuthalic::authalicToGeodeticLatitude: inverse did not converge`, res 0 already. IGEO7, IGEO7v2, IVEA7HL. spherical presets fine. wholeEarthIGEO7, icosaISEAL -> 37/39 examples

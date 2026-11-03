@@ -16,6 +16,7 @@
 - Arrow + GeoArrow in dggrid.wasm too: 939 KB (262 KB gzip). `lonLatToZ7Arrow`, `z7ToPolygonsArrow` read the C structs by hand (wasm32: ArrowSchema 48 bytes, ArrowArray 64), checked in test.mjs. input schema `release` = 1 (non NULL = not released, never called). `dg_arrow_release_*` because JS can't call the callback directly
 - `setLonWrap(WRAP.EAST | WEST | NONE)`, default east, `z7ToBoundary` + polygons
 - also vs the 80-bit gcc CLI on karula: same result, pole ties only, 5.1e-12 deg
+- 2026-11-03 Z7 topology: `z7Neighbors` (null = pentagon gap) / `z7NeighborsRaw` (`Z7_NONE`), `z7Children`, `z7Parent(ids, res = -1)`. 956 KB (+17 KB). test.mjs: reference vectors + GBT vs the CLI neighbour file of check_cli's res 6 run, 1.18M cells per preset, 0 differ
 
 ## dggrid.wasm + dggrid.mjs (JS API)
 
