@@ -72,32 +72,14 @@ pub const Ctx = struct {
 // error of the last failed dg_ctx_new, returned by dg_last_error(NULL)
 var new_err: [256:0]u8 = [_:0]u8{0} ** 256;
 
-// ---- Z7 index arithmetic (no DGGRID needed) ----
+// ---- Z7 index arithmetic (no DGGRID needed): z7.zig ----
 
-fn digit(z: u64, r: u5) u3 {
-    return @truncate(z >> @as(u6, 20 - @as(u6, r)) * 3);
-}
+const z7lib = @import("z7.zig");
+const digit = z7lib.digit;
+pub const z7Res = z7lib.res;
 
-/// resolution of a Z7 index, null if it is not a valid index
-pub fn z7Res(z: u64) ?u5 {
-    const quad = z >> 60;
-    if (quad > 11) return null;
-    // the digit a pentagon (quad + all zeros) doesn't have as a child
-    const skip: u3 = if (quad <= 5) 2 else 5;
-    var pentagon = true;
-    var res: u5 = 0;
-    var r: u5 = 1;
-    while (r <= max_res) : (r += 1) {
-        const d = digit(z, r);
-        if (d == 7) break;
-        if (pentagon and d == skip) return null;
-        pentagon = pentagon and d == 0;
-        res = r;
-    }
-    while (r <= max_res) : (r += 1) {
-        if (digit(z, r) != 7) return null; // digit after the first padding digit
-    }
-    return res;
+test {
+    _ = z7lib;
 }
 
 fn checkRes(ctx: *Ctx, res: c_int) ?c_int {
@@ -220,6 +202,59 @@ export fn dg_z7_from_string(s: [*]const u8, len: usize, out: *u64) c_int {
     }
     if (z7Res(z) == null) return DG_EINVAL;
     out.* = z;
+    return DG_OK;
+}
+
+// ---- Z7 topology, batch, no ctx needed (ctx only carries the error message) ----
+
+fn failOpt(ctx: ?*Ctx, code: c_int, comptime fmt: []const u8, args: anytype) c_int {
+    return if (ctx) |c| c.fail(code, fmt, args) else code;
+}
+
+fn validRes(ctx: ?*Ctx, z7: [*]const u64, i: usize) ?u5 {
+    const r = z7Res(z7[i]);
+    if (r == null) _ = failOpt(ctx, DG_EINVAL, "z7[{d}] = 0x{x:0>16} is not a valid Z7 index", .{ i, z7[i] });
+    return r;
+}
+
+/// resolution of each id, -1 for an invalid one
+export fn dg_z7_res_batch(z7: [*]const u64, n: usize, out: [*]i8) c_int {
+    for (0..n) |i| out[i] = if (z7Res(z7[i])) |r| @intCast(r) else -1;
+    return DG_OK;
+}
+
+/// ancestor at resolution res (0..cell's resolution), res -1 = one level up
+export fn dg_z7_parent(ctx: ?*Ctx, z7: [*]const u64, n: usize, res: c_int, out: [*]u64) c_int {
+    if (res < -1 or res > max_res)
+        return failOpt(ctx, DG_EINVAL, "parent resolution {d} out of range -1..{d}", .{ res, max_res });
+    for (0..n) |i| {
+        const r = validRes(ctx, z7, i) orelse return DG_EINVAL;
+        if (res == -1 and r == 0)
+            return failOpt(ctx, DG_EINVAL, "z7[{d}] is a base cell, it has no parent", .{i});
+        if (res > r)
+            return failOpt(ctx, DG_EINVAL, "z7[{d}] has resolution {d}, no parent at {d}", .{ i, r, res });
+        out[i] = z7lib.parent(z7[i], if (res == -1) r - 1 else @intCast(res));
+    }
+    return DG_OK;
+}
+
+/// the 7 children, out[7 * i + digit], a pentagon's skipped digit = DG_Z7_NONE
+export fn dg_z7_children(ctx: ?*Ctx, z7: [*]const u64, n: usize, out: [*]u64) c_int {
+    for (0..n) |i| {
+        const r = validRes(ctx, z7, i) orelse return DG_EINVAL;
+        if (r == max_res) return failOpt(ctx, DG_EINVAL, "z7[{d}] has resolution {d}, no children", .{ i, max_res });
+        z7lib.children(z7[i], r, out[7 * i ..][0..7]);
+    }
+    return DG_OK;
+}
+
+/// the 6 neighbours, out[6 * i + direction - 1] in GBT direction order 1..6, a pentagon's
+/// missing one = DG_Z7_NONE
+export fn dg_z7_neighbors(ctx: ?*Ctx, z7: [*]const u64, n: usize, out: [*]u64) c_int {
+    for (0..n) |i| {
+        const r = validRes(ctx, z7, i) orelse return DG_EINVAL;
+        z7lib.neighbors(z7[i], r, out[6 * i ..][0..6]);
+    }
     return DG_OK;
 }
 

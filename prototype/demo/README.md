@@ -48,6 +48,10 @@ with Grid("IGEO7v2") as g:                 # IGEO7v1, IVEA7HL, IVEA7HS, Grid.cus
     g.z7_to_points_arrow(ids, "native")            # | interleaved | wkb | wkt
     g.z7_to_polygons_arrow(ids, "wkb")
     g.set_lon_wrap("east")                         # default; "west", "none" = CLI WRAP
+    g.z7_neighbors(ids)                            # (n, 6) GBT direction order, NONE = pentagon gap
+    g.z7_children(ids); g.z7_parent(ids, res=-1)   # (n, 7) with NONE / ancestors
+    g.z7_neighbors_arrow(ids)                      # fixed_size_list<uint64>[6], gap = null
+    g.z7_children_arrow(ids); g.z7_to_string_arrow(ids); g.z7_from_string_arrow(strs)
 ```
 
 ```js
@@ -56,7 +60,10 @@ const dg = await Igeo7.load(await (await fetch('dggrid.wasm')).arrayBuffer(), { 
 const ids = dg.geoToZ7(9, [26.729], [58.378]);   // BigUint64Array
 dg.z7ToCentroid(ids); dg.z7ToBoundary(ids); dg.z7ToString(ids[0]);
 dg.lonLatToZ7Arrow(9, lon, lat); dg.z7ToPolygonsArrow(ids);
+dg.z7Neighbors(ids); dg.z7Children(ids); dg.z7Parent(ids);   // index arithmetic, null = pentagon gap
 ```
+
+The page draws the clicked cell with its 6 GBT neighbours (numbered by direction) and lists parents and children.
 
 ## Checked 2026-11-03 (mac arm64)
 

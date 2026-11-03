@@ -135,6 +135,9 @@ const api_exports = [_][]const u8{
     "dg_arrow_release_schema", "dg_arrow_release_array",
     "dg_geo_to_z7",      "dg_z7_to_centroid",  "dg_z7_to_boundary", "dg_z7_res",
     "dg_z7_to_string",   "dg_z7_from_string",  "dg_alloc",          "dg_free",
+    "dg_z7_res_batch",   "dg_z7_parent",       "dg_z7_children",    "dg_z7_neighbors",
+    "dg_arrow_z7_parent", "dg_arrow_z7_children", "dg_arrow_z7_neighbors",
+    "dg_arrow_z7_to_string", "dg_arrow_z7_from_string",
 };
 
 const GaLib = struct { lib: *std.Build.Step.Compile, cfg: *std.Build.Step.ConfigHeader };

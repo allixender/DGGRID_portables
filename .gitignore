@@ -12,3 +12,5 @@ stage/
 unpacked/
 __pycache__/
 prototype/lib/.src/
+# downloaded external Z7 implementations, reference only
+prototype/ext/

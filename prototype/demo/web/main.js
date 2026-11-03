@@ -80,11 +80,16 @@ async function locate() {
   }
   const [ring] = dg.z7ToBoundary([id]);
   const c = dg.z7ToCentroid([id]);
-  const chain = Array.from({ length: res + 1 }, (_, r) => dg.z7ToString(dg.geoToZ7(r, [lon], [lat])[0]));
+  const chain = Array.from({ length: res }, (_, r) => dg.z7Parent([id], r)[0]);
+  const nb = dg.z7Neighbors([id])[0];  // GBT direction order 1..6, null = pentagon gap
+  const nbIds = /** @type {bigint[]} */ (nb.filter((x) => x !== null));
+  const nbRings = dg.z7ToBoundary(nbIds);
+  const kids = dg.z7Children(res < 20 ? [id] : [])[0] ?? [];
   $('hit').setAttribute('d', wrapped(ring));
+  $('nbr').setAttribute('d', nbRings.map(wrapped).join(''));
   const pt = $('pt');
   pt.setAttribute('cx', lon); pt.setAttribute('cy', lat); pt.setAttribute('visibility', 'visible');
-  drawDetail(ring, [c.lon[0], c.lat[0]], [lon, lat]);
+  drawDetail(ring, nbRings, nb.map((x) => (x === null ? 0 : 1)), [c.lon[0], c.lat[0]], [lon, lat]);
   log([
     `${$('preset').value}, res ${res}`,
     `point     ${lon}, ${lat}`,
@@ -93,21 +98,33 @@ async function locate() {
     `centroid  ${c.lon[0].toFixed(8)}, ${c.lat[0].toFixed(8)}`,
     `vertices  ${ring.length}${ring.length === 5 ? ' (pentagon)' : ''}${isPoleCell(ring) ? ', pole cell' : ''}`,
     ...ring.map(([x, y], i) => `  ${i}  ${x.toFixed(8)}, ${y.toFixed(8)}`),
-    `res 0..${res}  ${chain.join(' ')}`,
+    `parents   ${[...chain, id].map((z) => dg.z7ToString(z)).join(' ')}`,
+    `neighbours (GBT direction 1..6)`,
+    ...nb.map((x, i) => `  ${i + 1}  ${x === null ? '-  (pentagon: no neighbour)' : dg.z7ToString(x)}`),
+    `children  ${kids.map((x) => dg.z7ToString(x).slice(-1)).join(' ')}  (last digit, ${kids.length})`,
   ].join('\n'));
 }
 
-/** @param {Ring} ring @param {[number, number]} c @param {[number, number]} p */
-function drawDetail(ring, c, p) {
-  const k = Math.cos((c[1] * Math.PI) / 180) || 1e-9;  // local equirectangular
-  const xy = ring.map(([x, y]) => [(x - c[0]) * k, y - c[1]]);
-  const span = Math.max(...xy.map(([x, y]) => Math.max(Math.abs(x), Math.abs(y)))) || 1;
-  const s = 110 / span, T = (/** @type {number[]} */ [x, y]) => [140 + x * s, 140 - y * s];
-  const pts = xy.map(T);
-  const [px, py] = T([(p[0] - c[0]) * k, p[1] - c[1]]);
-  $('detail').innerHTML =
-    `<polygon points="${pts.map((q) => q.join(',')).join(' ')}" class="hit"/>` +
-    pts.map(([x, y], i) => `<text x="${x}" y="${y}" dx="${x > 140 ? 6 : -14}" dy="4" font-size="11" fill="currentColor">${i}</text>`).join('') +
+/**
+ * cell + its neighbours in a local equirectangular view around the centroid c
+ * @param {Ring} ring @param {Ring[]} nbRings @param {number[]} present 1 per GBT direction, 0 = gap
+ * @param {[number, number]} c @param {[number, number]} p
+ */
+function drawDetail(ring, nbRings, present, c, p) {
+  const k = Math.cos((c[1] * Math.PI) / 180) || 1e-9;
+  const local = (/** @type {number[]} */ [x, y]) => [(((x - c[0] + 540) % 360) - 180) * k, y - c[1]];
+  const span = Math.max(...ring.map(local).map(([x, y]) => Math.max(Math.abs(x), Math.abs(y)))) || 1;
+  const s = 45 / span, T = (/** @type {number[]} */ [x, y]) => [140 + x * s, 140 - y * s];
+  const poly = (/** @type {Ring} */ r, /** @type {string} */ cls) =>
+    `<polygon points="${r.map(local).map(T).map((q) => q.join(',')).join(' ')}" class="${cls}"/>`;
+  const dirs = present.flatMap((ok, i) => (ok ? [i + 1] : []));
+  const label = (/** @type {Ring} */ r, /** @type {number} */ d) => {
+    const [x, y] = T(local([r.reduce((a, v) => a + v[0], 0) / r.length, r.reduce((a, v) => a + v[1], 0) / r.length]));
+    return `<text x="${x}" y="${y}" dy="4" text-anchor="middle" font-size="12" fill="currentColor">${d}</text>`;
+  };
+  const [px, py] = T(local(p));
+  $('detail').innerHTML = nbRings.map((r) => poly(r, 'nbr')).join('') + poly(ring, 'hit') +
+    nbRings.map((r, i) => label(r, dirs[i])).join('') +
     `<circle cx="140" cy="140" r="3" fill="currentColor"/><circle cx="${px}" cy="${py}" r="3" fill="none" stroke="currentColor"/>`;
 }
 

@@ -81,6 +81,24 @@ int dg_arrow_z7_to_polygons(dg_ctx* ctx, const struct ArrowSchema* z7_schema,
                             const struct ArrowArray* z7, int encoding,
                             struct ArrowSchema* out_schema, struct ArrowArray* out);
 
+/* z7 topology (dg_z7_parent / children / neighbors), null in -> null out. ctx only for the
+ * error message, may be NULL */
+/* -> uint64 "z7", res -1 = one level up */
+int dg_arrow_z7_parent(dg_ctx* ctx, const struct ArrowSchema* z7_schema, const struct ArrowArray* z7,
+                       int res, struct ArrowSchema* out_schema, struct ArrowArray* out);
+/* -> list<uint64> "children", 7 per cell, 6 for pentagons (no gap) */
+int dg_arrow_z7_children(dg_ctx* ctx, const struct ArrowSchema* z7_schema, const struct ArrowArray* z7,
+                         struct ArrowSchema* out_schema, struct ArrowArray* out);
+/* -> fixed_size_list<uint64>[6] "neighbors" in GBT direction order, a pentagon's missing
+ * direction = null element */
+int dg_arrow_z7_neighbors(dg_ctx* ctx, const struct ArrowSchema* z7_schema, const struct ArrowArray* z7,
+                          struct ArrowSchema* out_schema, struct ArrowArray* out);
+/* z7 <-> Z7 digit strings (utf8 out; utf8 or large_utf8 in, malformed -> error) */
+int dg_arrow_z7_to_string(dg_ctx* ctx, const struct ArrowSchema* z7_schema, const struct ArrowArray* z7,
+                          struct ArrowSchema* out_schema, struct ArrowArray* out);
+int dg_arrow_z7_from_string(dg_ctx* ctx, const struct ArrowSchema* str_schema, const struct ArrowArray* str,
+                            struct ArrowSchema* out_schema, struct ArrowArray* out);
+
 /* call the release callback, for callers that can't call a function pointer (wasm/JS) */
 void dg_arrow_release_schema(struct ArrowSchema* schema);
 void dg_arrow_release_array(struct ArrowArray* array);

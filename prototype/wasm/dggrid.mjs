@@ -14,11 +14,15 @@
 //   dg.z7ToBoundary(ids);                   // [[[lon, lat], ...], ...] (6 or 5 vertices)
 //   dg.lonLatToZ7Arrow(9, lon, lat);        // Arrow C structs: { values, nullBitmap, nullCount, .. }
 //   dg.z7ToPolygonsArrow(ids);              // geoarrow.polygon: { rings, polygons, x, y, metadata, .. }
+//   dg.z7Neighbors(ids); dg.z7Children(ids); dg.z7Parent(ids, res = -1)   // index arithmetic
 
 /** DGGRID 9.1 dggs_type presets (include/dggrid.h) */
 export const PRESET = Object.freeze({ IGEO7v2: 0, IGEO7v1: 1, IVEA7HL: 2, IVEA7HS: 3 });
 
 export const WRAP = Object.freeze({ NONE: 0, EAST: 1, WEST: 2 });
+
+/** DG_Z7_NONE: the missing neighbour / child of a pentagon in the raw outputs */
+export const Z7_NONE = 0xffffffffffffffffn;
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
@@ -245,6 +249,37 @@ export class Igeo7 {
       this.x.dg_arrow_release_schema(sOut);
       return out;
     });
+  }
+
+  // ---- Z7 topology: pure index arithmetic, same for every preset ----
+
+  #slots(fn, name, ids, k, ...extra) {
+    const n = ids.length;
+    return this.#withBuffers([8 * n, 8 * n * k], (pIds, pOut) => {
+      this.#putIds(pIds, ids);
+      this.#check(this.x[fn](this.ctx, pIds, n, ...extra, pOut), name);
+      return new BigUint64Array(this.x.memory.buffer, pOut, n * k).slice();
+    });
+  }
+
+  /** ancestors at resolution res (default -1 = one level up) */
+  z7Parent(ids, res = -1) { return this.#slots('dg_z7_parent', 'dg_z7_parent', ids, 1, res); }
+
+  /** raw: 6 per cell in GBT direction order, a pentagon's missing one = Z7_NONE */
+  z7NeighborsRaw(ids) { return this.#slots('dg_z7_neighbors', 'dg_z7_neighbors', ids, 6); }
+
+  /** [[6 neighbours, null for a pentagon's missing one], ...] */
+  z7Neighbors(ids) {
+    const raw = this.z7NeighborsRaw(ids);
+    return Array.from({ length: ids.length }, (_, i) =>
+      Array.from(raw.subarray(6 * i, 6 * i + 6), (z) => (z === Z7_NONE ? null : z)));
+  }
+
+  /** [[7 children, 6 for a pentagon], ...] */
+  z7Children(ids) {
+    const raw = this.#slots('dg_z7_children', 'dg_z7_children', ids, 7);
+    return Array.from({ length: ids.length }, (_, i) =>
+      Array.from(raw.subarray(7 * i, 7 * i + 7)).filter((z) => z !== Z7_NONE));
   }
 
   z7Res(id) { return this.x.dg_z7_res(BigInt(id)); }

@@ -17,7 +17,7 @@ void dgz_set_error(dg_ctx* ctx, const char* msg);
 int dg_ctx_datum(const dg_ctx* ctx);
 
 static int fail(dg_ctx* ctx, int code, const char* msg) {
-  dgz_set_error(ctx, msg);
+  if (ctx) dgz_set_error(ctx, msg);  // the z7 topology functions take ctx NULL
   return code;
 }
 
@@ -487,6 +487,176 @@ int dg_arrow_z7_to_polygons(dg_ctx* ctx, const struct ArrowSchema* z7_schema,
   }
   free(ll);
   free(nv);
+  free(z7);
+  free(valid);
+  return rc;
+}
+
+// ---- z7 topology + strings ----
+
+int dg_arrow_z7_parent(dg_ctx* ctx, const struct ArrowSchema* z7_schema, const struct ArrowArray* z7_in,
+                       int res, struct ArrowSchema* out_schema, struct ArrowArray* out) {
+  clear_out(out_schema, out);
+  uint64_t* z7;
+  uint8_t* valid;
+  int64_t k;
+  int rc = read_z7(ctx, z7_schema, z7_in, &z7, &valid, &k);
+  if (rc != DG_OK) return rc;
+  uint64_t* up = (uint64_t*)alloc_n(k, sizeof(uint64_t));
+  if (!up) rc = fail(ctx, DG_ENOMEM, "out of memory");
+  if (rc == DG_OK) rc = dg_z7_parent(ctx, z7, (size_t)k, res, up);
+  if (rc == DG_OK) rc = finish_ids(ctx, up, valid, z7_in->length, out_schema, out);
+  free(up);
+  free(z7);
+  free(valid);
+  return rc;
+}
+
+// list<uint64> (n_slots per id, DG_Z7_NONE slots left out) or fixed_size_list<uint64>[n_slots]
+// (DG_Z7_NONE slots as null elements)
+static int finish_id_lists(dg_ctx* ctx, const char* name, int fixed, const uint64_t* ids, int n_slots,
+                           const uint8_t* valid, int64_t n, struct ArrowSchema* out_schema,
+                           struct ArrowArray* out) {
+  ArrowSchemaInit(out_schema);
+  int rc = fixed ? ArrowSchemaSetTypeFixedSize(out_schema, NANOARROW_TYPE_FIXED_SIZE_LIST, n_slots)
+                 : ArrowSchemaSetType(out_schema, NANOARROW_TYPE_LIST);
+  if (rc == NANOARROW_OK) rc = ArrowSchemaSetName(out_schema, name);
+  if (rc == NANOARROW_OK) rc = ArrowSchemaSetType(out_schema->children[0], NANOARROW_TYPE_UINT64);
+  if (rc == NANOARROW_OK) rc = ArrowSchemaSetName(out_schema->children[0], "z7");
+  if (rc == NANOARROW_OK) rc = ArrowArrayInitFromSchema(out, out_schema, NULL);
+  if (rc == NANOARROW_OK) rc = ArrowArrayStartAppending(out);
+  int64_t m = 0;
+  for (int64_t i = 0; rc == NANOARROW_OK && i < n; i++) {
+    if (!valid[i]) {
+      rc = ArrowArrayAppendNull(out, 1);
+      continue;
+    }
+    for (int s = 0; rc == NANOARROW_OK && s < n_slots; s++) {
+      const uint64_t z = ids[m * n_slots + s];
+      if (z != DG_Z7_NONE) rc = ArrowArrayAppendUInt(out->children[0], z);
+      else if (fixed) rc = ArrowArrayAppendNull(out->children[0], 1);
+    }
+    m++;
+    if (rc == NANOARROW_OK) rc = ArrowArrayFinishElement(out);
+  }
+  if (rc == NANOARROW_OK) rc = ArrowArrayFinishBuildingDefault(out, NULL);
+  if (rc != NANOARROW_OK) {
+    release_out(out_schema, out);
+    return fail(ctx, DG_ENOMEM, "building the list array failed");
+  }
+  return DG_OK;
+}
+
+typedef int (*IdsToSlots)(dg_ctx*, const uint64_t*, size_t, uint64_t*);
+
+static int z7_to_lists(dg_ctx* ctx, const struct ArrowSchema* z7_schema, const struct ArrowArray* z7_in,
+                       IdsToSlots fn, int n_slots, int fixed, const char* name,
+                       struct ArrowSchema* out_schema, struct ArrowArray* out) {
+  clear_out(out_schema, out);
+  uint64_t* z7;
+  uint8_t* valid;
+  int64_t k;
+  int rc = read_z7(ctx, z7_schema, z7_in, &z7, &valid, &k);
+  if (rc != DG_OK) return rc;
+  uint64_t* slots = (uint64_t*)alloc_n(k * n_slots, sizeof(uint64_t));
+  if (!slots) rc = fail(ctx, DG_ENOMEM, "out of memory");
+  if (rc == DG_OK) rc = fn(ctx, z7, (size_t)k, slots);
+  if (rc == DG_OK) rc = finish_id_lists(ctx, name, fixed, slots, n_slots, valid, z7_in->length, out_schema, out);
+  free(slots);
+  free(z7);
+  free(valid);
+  return rc;
+}
+
+int dg_arrow_z7_children(dg_ctx* ctx, const struct ArrowSchema* z7_schema, const struct ArrowArray* z7,
+                         struct ArrowSchema* out_schema, struct ArrowArray* out) {
+  return z7_to_lists(ctx, z7_schema, z7, &dg_z7_children, 7, 0, "children", out_schema, out);
+}
+
+int dg_arrow_z7_neighbors(dg_ctx* ctx, const struct ArrowSchema* z7_schema, const struct ArrowArray* z7,
+                          struct ArrowSchema* out_schema, struct ArrowArray* out) {
+  return z7_to_lists(ctx, z7_schema, z7, &dg_z7_neighbors, 6, 1, "neighbors", out_schema, out);
+}
+
+int dg_arrow_z7_to_string(dg_ctx* ctx, const struct ArrowSchema* z7_schema, const struct ArrowArray* z7_in,
+                          struct ArrowSchema* out_schema, struct ArrowArray* out) {
+  clear_out(out_schema, out);
+  uint64_t* z7;
+  uint8_t* valid;
+  int64_t k;
+  int rc = read_z7(ctx, z7_schema, z7_in, &z7, &valid, &k);
+  if (rc != DG_OK) return rc;
+  for (int64_t i = 0; i < k; i++) {
+    if (dg_z7_res(z7[i]) < 0) {
+      char msg[96];
+      snprintf(msg, sizeof msg, "0x%016llx is not a valid Z7 index", (unsigned long long)z7[i]);
+      rc = fail(ctx, DG_EINVAL, msg);
+      break;
+    }
+  }
+  int a = NANOARROW_OK;
+  if (rc == DG_OK) {
+    a = ArrowSchemaInitFromType(out_schema, NANOARROW_TYPE_STRING);
+    if (a == NANOARROW_OK) a = ArrowSchemaSetName(out_schema, "z7");
+    if (a == NANOARROW_OK) a = ArrowArrayInitFromType(out, NANOARROW_TYPE_STRING);
+    if (a == NANOARROW_OK) a = ArrowArrayStartAppending(out);
+    int64_t m = 0;
+    for (int64_t i = 0; a == NANOARROW_OK && i < z7_in->length; i++) {
+      if (!valid[i]) {
+        a = ArrowArrayAppendNull(out, 1);
+        continue;
+      }
+      char buf[32];
+      const int len = dg_z7_to_string(z7[m++], buf, sizeof buf);
+      struct ArrowStringView sv = {buf, len};
+      a = ArrowArrayAppendString(out, sv);
+    }
+    if (a == NANOARROW_OK) a = ArrowArrayFinishBuildingDefault(out, NULL);
+    if (a != NANOARROW_OK) {
+      release_out(out_schema, out);
+      rc = fail(ctx, DG_ENOMEM, "building the string array failed");
+    }
+  }
+  free(z7);
+  free(valid);
+  return rc;
+}
+
+int dg_arrow_z7_from_string(dg_ctx* ctx, const struct ArrowSchema* str_schema, const struct ArrowArray* str,
+                            struct ArrowSchema* out_schema, struct ArrowArray* out) {
+  clear_out(out_schema, out);
+  struct ArrowError aerr;
+  aerr.message[0] = 0;
+  struct ArrowSchemaView sv;
+  if (ArrowSchemaViewInit(&sv, str_schema, &aerr) != NANOARROW_OK) return fail(ctx, DG_EINVAL, aerr.message);
+  if (sv.type != NANOARROW_TYPE_STRING && sv.type != NANOARROW_TYPE_LARGE_STRING) {
+    return fail(ctx, DG_EINVAL, "Z7 strings must be utf8 or large_utf8");
+  }
+  struct ArrowArrayView view;
+  ArrowArrayViewInitFromType(&view, sv.type);
+  if (ArrowArrayViewSetArray(&view, str, &aerr) != NANOARROW_OK) {
+    ArrowArrayViewReset(&view);
+    return fail(ctx, DG_EINVAL, aerr.message);
+  }
+  const int64_t n = str->length;
+  uint64_t* z7 = (uint64_t*)alloc_n(n, sizeof(uint64_t));
+  uint8_t* valid = (uint8_t*)alloc_n(n, 1);
+  int rc = (!z7 || !valid) ? fail(ctx, DG_ENOMEM, "out of memory") : DG_OK;
+  int64_t k = 0;
+  for (int64_t i = 0; rc == DG_OK && i < n; i++) {
+    valid[i] = !ArrowArrayViewIsNull(&view, i);
+    if (!valid[i]) continue;
+    const struct ArrowStringView s = ArrowArrayViewGetStringUnsafe(&view, i);
+    if (dg_z7_from_string(s.data, (size_t)s.size_bytes, &z7[k]) != DG_OK) {
+      char msg[96];
+      snprintf(msg, sizeof msg, "string %lld \"%.*s\" is not a Z7 index", (long long)i,
+               (int)(s.size_bytes < 24 ? s.size_bytes : 24), s.data);
+      rc = fail(ctx, DG_EINVAL, msg);
+    }
+    k++;
+  }
+  if (rc == DG_OK) rc = finish_ids(ctx, z7, valid, n, out_schema, out);
+  ArrowArrayViewReset(&view);
   free(z7);
   free(valid);
   return rc;

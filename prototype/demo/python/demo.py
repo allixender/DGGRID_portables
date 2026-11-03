@@ -6,7 +6,7 @@ import time
 
 import numpy as np
 
-from igeo7 import DggridError, Grid
+from igeo7 import NONE, DggridError, Grid
 
 TARTU = (26.729, 58.378)
 
@@ -34,6 +34,19 @@ with Grid("IGEO7v2") as g:
             fn()
         except DggridError as e:
             print(f"  {what} -> {e}")
+
+    # topology, pure index arithmetic: neighbours (GBT), children, parent
+    nb = g.z7_neighbors(ids)[0]
+    print("  neighbours:", " ".join(g.z7_to_string(x) for x in nb))
+    kids = g.z7_children(ids)[0]
+    print("  children:  ", " ".join(g.z7_to_string(x) for x in kids))
+    assert (g.z7_parent(kids) == z).all() and g.z7_parent(ids, 3)[0] == g.z7_from_string(chain[3])
+    pent = g.z7_from_string("0800")
+    print("  pentagon 0800 neighbours:", ["-" if x == NONE else g.z7_to_string(x) for x in g.z7_neighbors([pent])[0]])
+    # 1-ring + 2-ring around the cell (dedupe, cell itself excluded)
+    ring1 = set(nb.tolist())
+    ring2 = set(g.z7_neighbors(nb).ravel().tolist()) - ring1 - {int(z), int(NONE)}
+    print(f"  ring 1: {len(ring1)} cells, ring 2: {len(ring2)} cells")
 
     # antimeridian cell, the 3 wrap modes
     am = g.lonlat_to_z7(3, [180.0], [10.0])
@@ -84,6 +97,10 @@ with Grid("IGEO7v2") as g:
         print(f"  shapely: {len(geoms)} polygons from WKB, all valid: {bool(shapely.is_valid(geoms).all())}")
     except ImportError:
         pass
+
+    # topology as Arrow: fixed_size_list<uint64>[6] (pentagon gap = null), list<uint64>, utf8
+    print("  neighbors:", g.z7_neighbors_arrow(z.drop_null()).type, "| children:", g.z7_children_arrow(z.drop_null()).type)
+    print("  strings:", g.z7_to_string_arrow(z).to_pylist(), "->", g.z7_from_string_arrow(["0401234", None]).to_pylist())
 
     # into a pyarrow Table, eg. for GeoParquet via geopandas or straight parquet
     tbl = pa.table({"z7": z.drop_null(), "geometry": polys})

@@ -39,6 +39,9 @@ lib.dg_z7_to_centroid.argtypes = [C.c_void_p, u64_p, C.c_size_t, dbl_p, dbl_p]
 lib.dg_z7_to_boundary.argtypes = [C.c_void_p, u64_p, C.c_size_t, dbl_p, u8_p]
 lib.dg_z7_to_string.argtypes = [C.c_uint64, C.c_char_p, C.c_size_t]
 lib.dg_z7_from_string.argtypes = [C.c_char_p, C.c_size_t, u64_p]
+for fn in (lib.dg_z7_neighbors, lib.dg_z7_children):
+    fn.argtypes = [C.c_void_p, u64_p, C.c_size_t, u64_p]
+lib.dg_z7_parent.argtypes = [C.c_void_p, u64_p, C.c_size_t, C.c_int, u64_p]
 
 lib.dg_last_error.restype = C.c_char_p
 fails = 0
@@ -151,6 +154,90 @@ def compare_cells(label, ids, pentagons=None):
           f"boundary max diff {bmax:.1e} deg, within 1 deg of a pole {pmax:.1e}")
 
 
+NONE = 2**64 - 1
+TOPO_RES = int(os.environ.get("TOPO_RES", "6"))  # whole earth res 0..TOPO_RES, res 6 = 1.18M cells
+
+
+def z7_batch(fn, ids, slots):
+    n = len(ids)
+    out = (C.c_uint64 * (n * slots))()
+    call(fn(ctx, (C.c_uint64 * n)(*ids), n, out))
+    return [out[i * slots:(i + 1) * slots] for i in range(n)]
+
+
+def z7_string(z):
+    buf = C.create_string_buffer(32)
+    return buf.value.decode() if lib.dg_z7_to_string(z, buf, 32) > 0 else hex(z)
+
+
+def topology(res):
+    """GBT neighbours + index children + parent vs the CLI's neighbor / children output,
+    whole earth. CLI children = all res + 1 cells overlapping the cell: the 7 (pentagon 6)
+    interior ones = the Z7 index children first, then the 6 (5) straddling its edge"""
+    params = {**gen_common, "dggs_res_spec": res, "clip_subset_type": "WHOLE_EARTH",
+              "cell_output_type": "NONE", "point_output_type": "NONE",
+              "neighbor_output_type": "TEXT", "neighbor_output_file_name": "nbr"}
+    if res < 20:
+        params.update(children_output_type="TEXT", children_output_file_name="chd")
+    run_cli("topo", params)
+    cli_nbr = {int(l[0], 16): {int(x, 16) for x in l[1:]} for l in read_lines("nbr.nbr")}
+    ids = sorted(cli_nbr)
+    check(len(ids) == 10 * 7 ** res + 2, f"res {res}: CLI has {len(ids)} cells")
+    nbad = npent = 0
+    for z, nb in zip(ids, z7_batch(lib.dg_z7_neighbors, ids, 6)):
+        mine = [x for x in nb if x != NONE]
+        npent += len(mine) == 5
+        if len(set(mine)) != len(mine) or set(mine) != cli_nbr[z]:
+            nbad += 1
+            if nbad <= 3:
+                print(f"  neighbours of {z7_string(z)}: GBT {[z7_string(x) for x in nb]}, "
+                      f"CLI {sorted(z7_string(x) for x in cli_nbr[z])}")
+    check(nbad == 0 and npent == 12, f"res {res}: {nbad} neighbour sets differ from CLI, {npent} pentagons")
+    cbad = pbad = 0
+    if res < 20:
+        cli_chd = {int(l[0], 16): [int(x, 16) for x in l[1:]] for l in read_lines("chd.chd")}
+        for z, ch in zip(ids, z7_batch(lib.dg_z7_children, ids, 7)):
+            mine = [x for x in ch if x != NONE]
+            if set(mine) != set(cli_chd[z][:len(mine)]):
+                cbad += 1
+                if cbad <= 3:
+                    print(f"  children of {z7_string(z)}: {[z7_string(x) for x in mine]}, "
+                          f"CLI {[z7_string(x) for x in cli_chd[z]]}")
+            up = (C.c_uint64 * len(mine))()
+            call(lib.dg_z7_parent(ctx, (C.c_uint64 * len(mine))(*mine), len(mine), -1, up))
+            pbad += any(u != z for u in up)
+        check(cbad == 0 and pbad == 0, f"res {res}: {cbad} children sets differ from CLI, {pbad} parent mismatches")
+    print(f"res {res:2d}: whole earth {len(ids)} cells, GBT neighbours = CLI neighbours"
+          f"{', index children = CLI interior children, parent(children) = cell' if res < 20 else ''}"
+          f"{'' if nbad == cbad == pbad == 0 else ' -> MISMATCH'}")
+
+
+def unit(lon, lat):
+    lo, la = math.radians(lon), math.radians(lat)
+    return (math.cos(la) * math.cos(lo), math.cos(la) * math.sin(lo), math.sin(la))
+
+
+def geometry(res, lons, lats):
+    """GBT neighbours without the CLI: each shares exactly 2 boundary vertices (one edge)
+    with the cell, and the relation is symmetric"""
+    ids = sorted(set(geo_to_z7(res, lons, lats)))
+    nbs = z7_batch(lib.dg_z7_neighbors, ids, 6)
+    flat = sorted({x for nb in nbs for x in nb if x != NONE} | set(ids))
+    verts = dict(zip(flat, ([unit(*v) for v in ring] for ring in boundaries(flat))))
+    back = dict(zip(flat, z7_batch(lib.dg_z7_neighbors, flat, 6)))
+    tol = math.radians(1e-9)
+    ebad = sbad = 0
+    for z, nb in zip(ids, nbs):
+        for x in nb:
+            if x == NONE:
+                continue
+            shared = sum(1 for a in verts[z] for b in verts[x] if math.dist(a, b) < tol)
+            ebad += shared != 2
+            sbad += z not in back[x]
+    check(ebad == 0 and sbad == 0, f"res {res}: {ebad} neighbours not sharing one edge, {sbad} not symmetric")
+    return len(ids)
+
+
 def touches_pole(z, res):
     """cell centre closer to a pole than 1.5 * the cell's circumradius (hexagon: 0.62 * sqrt(area))"""
     area_km2 = 510.0656e6 / (10 * 7 ** res + 2)
@@ -226,6 +313,16 @@ for preset in presets:
             with open(os.path.join(work, "cells.geojson")) as f:
                 ids = [int(ft["properties"]["name"], 16) for ft in json.load(f)["features"]]
             compare_cells(f"res {res:2d}: whole earth {wrap}", ids, pentagons=12)
+
+    # ---- topology: neighbours, children, parent vs the CLI
+    for res in range(TOPO_RES + 1):
+        topology(res)
+    # beyond the whole earth runs: random cells + their neighbours, plus pentagon centres
+    pent_lon, pent_lat = map(list, zip(*(centroids([q << 60 | (2**60 - 1)]) for q in range(12))))
+    glon, glat = lons[:1000] + [x[0] for x in pent_lon], lats[:1000] + [x[0] for x in pent_lat]
+    for res in range(TOPO_RES + 1, 21):
+        n = geometry(res, glon, glat)
+    print(f"res {TOPO_RES + 1}-20: {n} cells each incl. the 12 pentagons, every GBT neighbour shares one edge, symmetric")
 
     lib.dg_ctx_free(ctx)
 

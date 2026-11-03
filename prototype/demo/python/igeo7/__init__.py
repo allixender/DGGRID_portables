@@ -18,12 +18,13 @@ import sys
 
 import numpy as np
 
-__all__ = ["Grid", "PRESETS", "WRAP", "ENCODING", "DggridError"]
+__all__ = ["Grid", "PRESETS", "WRAP", "ENCODING", "NONE", "DggridError"]
 
 PRESETS = {"IGEO7v2": 0, "IGEO7v1": 1, "IVEA7HL": 2, "IVEA7HS": 3}
 WRAP = {"none": 0, "east": 1, "west": 2}
 ENCODING = {"native": 0, "interleaved": 1, "wkb": 2, "wkt": 3}
 MAX_RES = 20
+NONE = np.uint64(2**64 - 1)  # a pentagon's missing neighbour / child in the raw outputs
 
 
 class DggridError(RuntimeError):
@@ -57,6 +58,14 @@ def _load():
         "dg_arrow_z7_to_polygons": ([vp, vp, vp, C.c_int, vp, vp], C.c_int),
         "dg_arrow_release_schema": ([vp], None),
         "dg_arrow_release_array": ([vp], None),
+        "dg_z7_parent": ([vp, u64, C.c_size_t, C.c_int, u64], C.c_int),
+        "dg_z7_children": ([vp, u64, C.c_size_t, u64], C.c_int),
+        "dg_z7_neighbors": ([vp, u64, C.c_size_t, u64], C.c_int),
+        "dg_arrow_z7_parent": ([vp, vp, vp, C.c_int, vp, vp], C.c_int),
+        "dg_arrow_z7_children": ([vp, vp, vp, vp, vp], C.c_int),
+        "dg_arrow_z7_neighbors": ([vp, vp, vp, vp, vp], C.c_int),
+        "dg_arrow_z7_to_string": ([vp, vp, vp, vp, vp], C.c_int),
+        "dg_arrow_z7_from_string": ([vp, vp, vp, vp, vp], C.c_int),
     }
     for fn, (args, res) in sigs.items():
         getattr(lib, fn).argtypes, getattr(lib, fn).restype = args, res
@@ -164,6 +173,27 @@ class Grid:
                                            ll.ctypes.data_as(_dbl), nv.ctypes.data_as(_u8)), "dg_z7_to_boundary")
         return [ll[i, :nv[i]] for i in range(len(ids))]
 
+    # ---- Z7 topology (index arithmetic, the same for every preset) ----
+
+    def _slots(self, fn, ids, k, *extra):
+        ids = _ids(ids)
+        out = np.empty((len(ids), k), dtype=np.uint64)
+        self._check(getattr(_lib, fn)(self._ctx, ids.ctypes.data_as(_u64), len(ids), *extra,
+                                      out.ctypes.data_as(_u64)), fn)
+        return out
+
+    def z7_parent(self, ids, res=-1):
+        """ancestors at resolution res, -1 = one level up"""
+        return self._slots("dg_z7_parent", ids, 1, res)[:, 0]
+
+    def z7_children(self, ids):
+        """(n, 7) uint64 in digit order, a pentagon's skipped digit = NONE"""
+        return self._slots("dg_z7_children", ids, 7)
+
+    def z7_neighbors(self, ids):
+        """(n, 6) uint64 in GBT direction order, a pentagon's missing neighbour = NONE"""
+        return self._slots("dg_z7_neighbors", ids, 6)
+
     # ---- Z7 helpers, no context ----
 
     @staticmethod
@@ -213,6 +243,30 @@ class Grid:
         import pyarrow as pa
         with _Borrowed(pa.array(_ids(ids)) if not isinstance(ids, pa.Array) else ids) as z:
             return self._arrow_call("dg_arrow_z7_to_polygons", z.ps, z.pa, ENCODING[encoding])
+
+    def _ids_arrow(self, fn, ids, *extra):
+        import pyarrow as pa
+        with _Borrowed(pa.array(_ids(ids)) if not isinstance(ids, pa.Array) else ids) as z:
+            return self._arrow_call(fn, z.ps, z.pa, *extra)
+
+    def z7_parent_arrow(self, ids, res=-1):
+        return self._ids_arrow("dg_arrow_z7_parent", ids, res)
+
+    def z7_children_arrow(self, ids):
+        """list<uint64>, 7 per cell, 6 for pentagons"""
+        return self._ids_arrow("dg_arrow_z7_children", ids)
+
+    def z7_neighbors_arrow(self, ids):
+        """fixed_size_list<uint64>[6], a pentagon's missing neighbour = null element"""
+        return self._ids_arrow("dg_arrow_z7_neighbors", ids)
+
+    def z7_to_string_arrow(self, ids):
+        return self._ids_arrow("dg_arrow_z7_to_string", ids)
+
+    def z7_from_string_arrow(self, strings):
+        import pyarrow as pa
+        with _Borrowed(pa.array(strings, pa.string()) if not isinstance(strings, pa.Array) else strings) as s:
+            return self._arrow_call("dg_arrow_z7_from_string", s.ps, s.pa)
 
 
 try:  # registers the geoarrow.* extension types, so Arrow outputs come back typed

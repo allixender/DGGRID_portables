@@ -20,7 +20,8 @@ zig build -Dtarget=wasm32-wasi -Ddgreal=double -Doptimize=ReleaseFast -p zig-out
 `include/dggrid.h`, layers:
 
 - `dgcore.cpp`: only file touching DGGRID classes. ctx = DgRFNetwork + DgGeoSphRF (authalic sphere) + `DgIDGGSBase::makeRF(.., proj, .., Z7)` (res 0-20), same path as the CLI. batch loops, plain C, catches the fatal-hook exception -> error code. WGS84 presets: latitude through `DgAuthalic` per value, longitude untouched
-- `dggrid.zig`: the exported C ABI (`export fn dg_*`). owns the handle + error message, validates everything first (res, lon/lat range + NaN, Z7 validity incl. deleted pentagon digits) -> on wasm DGGRID fatal = trap. Z7 int <-> string + resolution in Zig (bit layout from DgZ7System.cpp, no DGGRID call), batches split into runs of equal resolution
+- `dggrid.zig`: the exported C ABI (`export fn dg_*`). owns the handle + error message, validates everything first (res, lon/lat range + NaN, Z7 validity incl. deleted pentagon digits) -> on wasm DGGRID fatal = trap. Z7 int <-> string in Zig, batches split into runs of equal resolution
+- `z7.zig`: Z7 index arithmetic, no DGGRID call (bit layout from DgZ7System.cpp): validity + resolution, parent, children, GBT neighbours, see "Z7 topology"
 - consumers: shared lib (ctypes/cffi, Julia ccall, R), wasm32-wasi reactor (`dggrid.wasm`, exports exactly the API, ../wasm/dggrid.mjs)
 
 | preset | upstream dggs_type | proj | lat in/out | vert0 lon |
@@ -32,7 +33,7 @@ zig build -Dtarget=wasm32-wasi -Ddgreal=double -Doptimize=ReleaseFast -p zig-out
 
 all: vert0 lat exact icosahedron vertex 58.28252558853899.. (on the authalic sphere, also for L), azimuth 0
 
-functions: `dg_preset_new(preset)`, `dg_igeo7_new()` (= IGEO7v2, changed from the sphere grid before 9.1), `dg_ctx_new(proj, datum, vert0_lon, vert0_lat, az)` (lat NaN = exact vertex), `dg_geo_to_z7`, `dg_z7_to_centroid`, `dg_z7_to_boundary` (6 (lon, lat) pairs per cell, nverts 6 or 5, NaN padded, lon > 180 across the antimeridian by default, `dg_ctx_set_lon_wrap`), `dg_z7_res`, `dg_z7_to_string`, `dg_z7_from_string`, `dg_last_error`, `dg_alloc`/`dg_free`. single-threaded, one ctx per thread
+functions: `dg_preset_new(preset)`, `dg_igeo7_new()` (= IGEO7v2, changed from the sphere grid before 9.1), `dg_ctx_new(proj, datum, vert0_lon, vert0_lat, az)` (lat NaN = exact vertex), `dg_geo_to_z7`, `dg_z7_to_centroid`, `dg_z7_to_boundary` (6 (lon, lat) pairs per cell, nverts 6 or 5, NaN padded, lon > 180 across the antimeridian by default, `dg_ctx_set_lon_wrap`), `dg_z7_res`, `dg_z7_to_string`, `dg_z7_from_string`, `dg_z7_neighbors` / `_children` / `_parent` / `_res_batch` (see Z7 topology), `dg_last_error`, `dg_alloc`/`dg_free`. single-threaded, one ctx per thread
 
 ```julia
 ctx = @ccall lib.dg_preset_new(0::Cint)::Ptr{Cvoid}   # IGEO7v2, plain ccall, no CxxWrap
@@ -121,6 +122,33 @@ whole earth IGEO7v2, planar lon/lat, invalid in shapely / span > 120 deg / sum o
 
 -> Arrow layer overhead not measurable next to DGGRID (raw geo -> Z7 397k/s). x87 long double 4-5x slower -> double for the lib
 
+## Z7 topology (2026-11-03)
+
+pure index arithmetic in `z7.zig`, the same for every preset (Z7 = topology of the icosahedron net, orientation / projection / datum don't enter). ctx only carries the error message, `NULL` ok
+
+| C | Arrow | out |
+|---|---|---|
+| `dg_z7_neighbors` | `dg_arrow_z7_neighbors` | 6 per cell in GBT direction order 1..6, pentagon gap = `DG_Z7_NONE` (= UINT64_MAX) / null element of a `fixed_size_list<uint64>[6]` |
+| `dg_z7_children` | `dg_arrow_z7_children` | 7 per cell in digit order, pentagon skip digit (2 for base cells 0-5, 5 for 6-11) = `DG_Z7_NONE` / `list<uint64>` of 7 or 6 |
+| `dg_z7_parent(.., res)` | `dg_arrow_z7_parent` | ancestor at res, -1 = one level up; base cell + -1, or res > the cell's -> error |
+| `dg_z7_res_batch` | | int8 per id, -1 invalid |
+| | `dg_arrow_z7_to_string` / `_from_string` | utf8 <-> uint64, large_utf8 in ok, null -> null |
+
+- neighbours: Generalized Balanced Ternary addition, CW tables at odd / CCW at even resolutions, carry into the neighbouring base cell, rotations into / out of the polar base cells 0 + 11, exclusion zone rotation next to pentagons. ported from z7py (Apache-2.0) <- z7_julia <- the C++ Z7 reference (W. J. Renoud, J. Jimenez Shaw, github.com/wrenoud/Z7)
+- the 3 reference implementations (z7py numba, z7_julia `Z7IndexUInt64` + `Z7IndexComp`): same slot arrays as `z7.zig` for all 196,092 cells res 0-5 (order + gaps). C++ itself not built (download misses `BitFieldProxy.h`), its test vectors are in `z7.zig`
+- differences found in the references, all edge cases: no input validation anywhere (base cell 12-15 = out of bounds table read; a 7 inside the digits: C++ counts the resolution from the end, Python/Julia take the first 7). C++ indexes `pole_0_rotations[row-1][col-1]` and `elem[first_non_zero]` unchecked (0 / 21 possible in principle), z7py + Julia guard both, `z7.zig` too. upstream test checks only "DGGRID's neighbours are among the reported ones", res 2-3, 8.x ISEA7H
+- convenience functions in z7py / Julia, not taken over: hex <-> digit lists (bindings: `%016x`), `local_pos` (= last digit, wrong at res 0: "05" -> parent "0"), monotonic range index (z7py, base * 7^L + digits, keeps pentagon gaps -> next), C++ `operator++` walks into deleted pentagon ids (`0002`)
+
+checks:
+- `zig build test`: the reference vectors (single GBT steps, exclusion zone 1-4, pentagons 00 / 0800 / 090 at res 1, 19, 20)
+- `check_cli.py` vs the 9.1 CLI `neighbor_output_type` + `children_output_type`, whole earth res 0-6 (1.37M cells per preset), all 4 presets: neighbour sets equal (6, pentagons 5), Z7 children = the first 7 (6) of the CLI's children = its interior children (the CLI also lists the 6 (5) res + 1 cells straddling the edge), parent(children) = cell
+- res 7-20, 1000 random cells + the 12 pentagon centres per res, all presets: every neighbour shares exactly 2 vertices (1e-9 deg) with the cell, relation symmetric
+- `check_arrow.py`: Arrow outputs = raw, types, nulls, slices, NULL ctx errors. wasm `test.mjs`: vectors + GBT vs CLI neighbour file, 1.18M cells per preset
+
+- karula x86_64 native, double + long double: zig tests (gnu + musl), check_cli vs the gcc 80-bit CLI res 0-5 + geometry res 6-20 all presets, check_arrow, demo.py OK
+
+speed, mac arm64, 200k res 9 ids (karula: 12.3M/s raw in both real types, integer only): neighbours raw 14.6M/s, Arrow 11.3M/s (fixed_size_list), children Arrow 21M/s, to string 19M/s. ca 40x a point -> cell, wasm neighbours ca free next to geoToZ7
+
 ## what setup_src.sh does
 
 - `git archive` of the pinned DGGRID (src/, examples/) + geoarrow-c (src/) commits -> plain files, local edits in the submodules can't leak in
@@ -151,7 +179,7 @@ whole earth IGEO7v2, planar lon/lat, invalid in shapely / span > 120 deg / sum o
 - the 4 pole cells: pole vertices? (= leaves CLI parity)
 - whole table / ArrowArrayStream, chunked input is a loop on the caller's side for now
 - JS: arrow-js-ffi instead of the hand written struct reader in dggrid.mjs, untested
-- Z7 parent/children: digit truncation confirmed in DgZ7System::setAddNdxParent, children skip the pentagon digit, not exposed yet
+- Z7 k-ring / disk on top of `dg_z7_neighbors` (dedupe), range index (z7py `z7_to_monotonic_int`)
 - Z7 hex string form like the CLI
 - hot loop still allocates per element inside DGGRID's convert() chain (malloc heavy, cf. karula perf in build_notes)
 - shared lib exports all of dglib's C++ symbols too -> visibility / export list like the wasm build

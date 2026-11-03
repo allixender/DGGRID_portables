@@ -6,6 +6,9 @@ export type Preset = (typeof PRESET)[keyof typeof PRESET];
 export declare const WRAP: Readonly<{ NONE: 0; EAST: 1; WEST: 2 }>;
 export type Wrap = (typeof WRAP)[keyof typeof WRAP];
 
+/** a pentagon's missing neighbour / child in the raw outputs */
+export declare const Z7_NONE: bigint;
+
 /** Z7 cell index; plain numbers lose bits beyond 2^53, use bigint */
 export type Z7 = bigint;
 export type Lon = ArrayLike<number>;
@@ -56,6 +59,14 @@ export declare class Igeo7 {
   /** NaN, NaN = null */
   lonLatToZ7Arrow(res: number, lon: Lon, lat: Lon): ArrowIds;
   z7ToPolygonsArrow(ids: ArrayLike<Z7> | Z7[]): ArrowPolygons;
+  /** ancestors at resolution res, default -1 = one level up */
+  z7Parent(ids: ArrayLike<Z7> | Z7[], res?: number): BigUint64Array;
+  /** 6 per cell in GBT direction order, a pentagon's missing neighbour = Z7_NONE */
+  z7NeighborsRaw(ids: ArrayLike<Z7> | Z7[]): BigUint64Array;
+  /** 6 per cell, null for a pentagon's missing neighbour */
+  z7Neighbors(ids: ArrayLike<Z7> | Z7[]): (Z7 | null)[][];
+  /** 7 per cell, 6 for pentagons */
+  z7Children(ids: ArrayLike<Z7> | Z7[]): Z7[][];
   /** -1 if invalid */
   z7Res(id: Z7): number;
   z7ToString(id: Z7): string;

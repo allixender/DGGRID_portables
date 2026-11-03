@@ -39,6 +39,14 @@ lib.dg_arrow_z7_to_points.argtypes = [vp, vp, vp, C.c_int, vp, vp]
 lib.dg_arrow_z7_to_polygons.argtypes = [vp, vp, vp, C.c_int, vp, vp]
 lib.dg_arrow_release_schema.argtypes = [vp]
 lib.dg_arrow_release_array.argtypes = [vp]
+for f in (lib.dg_z7_neighbors, lib.dg_z7_children):
+    f.argtypes = [vp, u64, C.c_size_t, u64]
+lib.dg_z7_parent.argtypes = [vp, u64, C.c_size_t, C.c_int, u64]
+lib.dg_z7_to_string.argtypes = [C.c_uint64, C.c_char_p, C.c_size_t]
+lib.dg_z7_from_string.argtypes = [C.c_char_p, C.c_size_t, u64]
+for f in (lib.dg_arrow_z7_neighbors, lib.dg_arrow_z7_children, lib.dg_arrow_z7_to_string, lib.dg_arrow_z7_from_string):
+    f.argtypes = [vp, vp, vp, vp, vp]
+lib.dg_arrow_z7_parent.argtypes = [vp, vp, vp, C.c_int, vp, vp]
 
 NATIVE, INTERLEAVED, WKB, WKT = 0, 1, 2, 3
 PRESETS = {"IGEO7v2": 0, "IGEO7v1": 1, "IVEA7HL": 2, "IVEA7HS": 3}
@@ -342,6 +350,82 @@ for name, preset in PRESETS.items():
 
     lib.dg_ctx_free(ctx)
 
+# ---- z7 topology + strings (preset independent; ctx only for messages, NULL allowed) ----
+NONE = 2**64 - 1
+ctx = lib.dg_preset_new(0)
+
+
+def raw_slots(fn, ids, k, c=None):
+    ids = np.ascontiguousarray(ids, dtype=np.uint64)
+    out = np.empty(len(ids) * k, dtype=np.uint64)
+    assert fn(c, ids.ctypes.data_as(u64), len(ids), out.ctypes.data_as(u64)) == 0
+    return out.reshape(-1, k)
+
+
+topo_ids = np.concatenate([all_ids(r) for r in range(5)] + [raw_ids(ctx, r, lon[:2000], lat[:2000]) for r in (9, 15, 19)])
+tarr = pa.array(topo_ids, type=pa.uint64())
+nb_raw = raw_slots(lib.dg_z7_neighbors, topo_ids, 6)
+with Exported(tarr) as e:
+    nb = call(ctx, lib.dg_arrow_z7_neighbors, ctx, e.ps, e.pa)
+nb.validate(full=True)
+check(pa.types.is_fixed_size_list(nb.type) and nb.type.list_size == 6 and nb.type.value_type == pa.uint64(), f"neighbors type {nb.type}")
+want = [[None if x == NONE else int(x) for x in row] for row in nb_raw]
+check(nb.to_pylist() == want, "arrow neighbors != raw (pentagon gap = null element)")
+check(sum(row.count(None) for row in want) == 12 * 5, "pentagon gaps: 12 per whole earth resolution 0-4")
+with Exported(tarr) as e:
+    ch = call(ctx, lib.dg_arrow_z7_children, ctx, e.ps, e.pa)
+ch.validate(full=True)
+ch_raw = raw_slots(lib.dg_z7_children, topo_ids, 7)
+check(ch.to_pylist() == [[int(x) for x in row if x != NONE] for row in ch_raw], "arrow children != raw")
+check(sorted(set(map(len, ch.to_pylist()))) == [6, 7], "children per cell 6 / 7")
+for res_arg in (-1, 0):
+    with Exported(tarr.slice(12)) as e:  # no base cells, they have no parent at -1
+        par = call(ctx, lib.dg_arrow_z7_parent, ctx, e.ps, e.pa, res_arg)
+    out = np.empty(len(topo_ids) - 12, dtype=np.uint64)
+    assert lib.dg_z7_parent(ctx, topo_ids[12:].ctypes.data_as(u64), len(out), res_arg, out.ctypes.data_as(u64)) == 0
+    ids_equal(par, out, f"arrow parent res {res_arg}")
+# children -> parent = the cell, via Arrow both ways
+kids = pa.array([x for row in ch.to_pylist() for x in row], type=pa.uint64())
+with Exported(kids) as e:
+    up = call(ctx, lib.dg_arrow_z7_parent, ctx, e.ps, e.pa, -1)
+ids_equal(up, [int(z) for z, row in zip(topo_ids, ch_raw) for x in row if x != NONE], "parent(children) = cell")
+# strings, utf8 + large_utf8, nulls; NULL ctx
+with Exported(tarr) as e:
+    st = call(None, lib.dg_arrow_z7_to_string, None, e.ps, e.pa)
+buf = C.create_string_buffer(32)
+check(st.to_pylist() == [buf.value.decode() for z in topo_ids if lib.dg_z7_to_string(int(z), buf, 32) > 0], "arrow z7 -> string != raw")
+for t in (pa.string(), pa.large_string()):
+    with Exported(st.cast(t)) as e:
+        ids_equal(call(ctx, lib.dg_arrow_z7_from_string, ctx, e.ps, e.pa), topo_ids, f"arrow string -> z7 {t}")
+nulls = pa.array([int(topo_ids[100]), None], type=pa.uint64())
+for fn, extra in ((lib.dg_arrow_z7_neighbors, ()), (lib.dg_arrow_z7_children, ()), (lib.dg_arrow_z7_parent, (0,)), (lib.dg_arrow_z7_to_string, ())):
+    with Exported(nulls) as e:
+        r = call(ctx, fn, ctx, e.ps, e.pa, *extra)
+    check(r.null_count == 1 and r[1].as_py() is None, f"{fn.__name__} null in -> null out")
+def from_str(s):
+    z = C.c_uint64()
+    assert lib.dg_z7_from_string(s.encode(), len(s), C.byref(z)) == 0
+    return z.value
+
+
+with Exported(pa.array(["0401234", None, "05"])) as e:
+    ids_equal(call(ctx, lib.dg_arrow_z7_from_string, ctx, e.ps, e.pa), [from_str("0401234"), None, from_str("05")], "from_string nulls")
+# errors
+for fn, arr, extra in ((lib.dg_arrow_z7_neighbors, pa.array([NONE], type=pa.uint64()), ()),
+                       (lib.dg_arrow_z7_children, pa.array([int(raw_ids(ctx, 20, [1.0], [1.0])[0])], type=pa.uint64()), ()),
+                       (lib.dg_arrow_z7_parent, pa.array([from_str("05")], type=pa.uint64()), (-1,)),
+                       (lib.dg_arrow_z7_parent, pa.array([from_str("0401234")], type=pa.uint64()), (6,)),
+                       (lib.dg_arrow_z7_to_string, pa.array([NONE], type=pa.uint64()), ()),
+                       (lib.dg_arrow_z7_from_string, pa.array(["002"]), ()),
+                       (lib.dg_arrow_z7_from_string, pa.array([1.0]), ())):
+    with Exported(arr) as e:
+        call(ctx, fn, ctx, e.ps, e.pa, *extra, expect_ok=False)
+    with Exported(arr) as e:  # NULL ctx: error code, no crash
+        s, a = C.create_string_buffer(72), C.create_string_buffer(80)
+        check(fn(None, e.ps, e.pa, *extra, C.addressof(s), C.addressof(a)) != 0, f"{fn.__name__} NULL ctx error")
+print(f"topology: {len(topo_ids)} ids res 0-4, 9, 15, 19: arrow neighbors / children / parent / strings = raw API, nulls, errors")
+lib.dg_ctx_free(ctx)
+
 # ---- release: repeated round trips must not grow ----
 ctx = lib.dg_preset_new(0)
 ref = raw_ids(ctx, RES, lon, lat)
@@ -374,12 +458,23 @@ lon2, lat2 = rng.uniform(-180, 180, M), np.degrees(np.arcsin(rng.uniform(-1, 1, 
 pts2 = ga.point().from_geobuffers(None, lon2, lat2)
 wkb2 = ga.as_wkb(pts2)
 ids2 = pa.array(raw_ids(ctx, RES, lon2, lat2), type=pa.uint64())
+
+
+def topo_call(fn, ids):
+    with Exported(ids) as e:
+        return call(ctx, fn, ctx, e.ps, e.pa)
+
+
 for what, fn in [("points struct -> z7", lambda: geo_to_z7(ctx, RES, pts2)),
                  ("points wkb -> z7", lambda: geo_to_z7(ctx, RES, wkb2)),
                  ("lon, lat -> z7", lambda: lonlat_to_z7(ctx, RES, pa.array(lon2), pa.array(lat2))),
                  ("z7 -> points", lambda: z7_to_points(ctx, ids2)),
                  ("z7 -> polygons", lambda: z7_to_polygons(ctx, ids2)),
-                 ("z7 -> polygons wkb", lambda: z7_to_polygons(ctx, ids2, WKB))]:
+                 ("z7 -> polygons wkb", lambda: z7_to_polygons(ctx, ids2, WKB)),
+                 ("z7 -> neighbors raw", lambda: raw_slots(lib.dg_z7_neighbors, np.asarray(ids2), 6)),
+                 ("z7 -> neighbors arrow", lambda: topo_call(lib.dg_arrow_z7_neighbors, ids2)),
+                 ("z7 -> children arrow", lambda: topo_call(lib.dg_arrow_z7_children, ids2)),
+                 ("z7 -> string arrow", lambda: topo_call(lib.dg_arrow_z7_to_string, ids2))]:
     t = time.time()
     fn()
     print(f"| {what} | {M / (time.time() - t) / 1000:.0f}k/s |")

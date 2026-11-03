@@ -73,6 +73,21 @@ int dg_z7_res(uint64_t z7);                                  /* -1 if invalid */
 int dg_z7_to_string(uint64_t z7, char* buf, size_t len);     /* length, -1 on error */
 int dg_z7_from_string(const char* s, size_t len, uint64_t* out);
 
+/* Z7 topology, pure index arithmetic, the same for every preset. Batch: on an invalid id
+ * DG_EINVAL (message in dg_last_error(ctx) if ctx != NULL, ctx may be NULL), out is then
+ * partly written. Neighbours by GBT addition (port of the Z7 reference, see README) */
+#define DG_Z7_NONE UINT64_MAX   /* the missing neighbour / child of a pentagon */
+/* resolution per id, -1 if invalid; always DG_OK */
+int dg_z7_res_batch(const uint64_t* z7, size_t n, int8_t* out);
+/* ancestor at resolution res (0 .. the cell's resolution), res -1 = one level up */
+int dg_z7_parent(dg_ctx* ctx, const uint64_t* z7, size_t n, int res, uint64_t* out);
+/* children: out[7 * i + d] = digit d, a pentagon's skipped digit (2, or 5 for base cells
+ * 6-11) = DG_Z7_NONE. Resolution 20 cells have none -> DG_EINVAL */
+int dg_z7_children(dg_ctx* ctx, const uint64_t* z7, size_t n, uint64_t* out);
+/* neighbours sharing an edge: out[6 * i + k] in GBT direction order 1..6, a pentagon's
+ * missing direction = DG_Z7_NONE */
+int dg_z7_neighbors(dg_ctx* ctx, const uint64_t* z7, size_t n, uint64_t* out);
+
 /* malloc/free of this library, for callers sharing no allocator (wasm/JS) */
 void* dg_alloc(size_t n);
 void  dg_free(void* p);

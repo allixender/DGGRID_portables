@@ -5,7 +5,7 @@
 // for IGEO7v2.
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { Igeo7, PRESET, WRAP } from './dggrid.mjs';
+import { Igeo7, PRESET, WRAP, Z7_NONE } from './dggrid.mjs';
 
 const [wasmPath, work] = process.argv.slice(2);
 let fails = 0;
@@ -68,8 +68,35 @@ for (const [name, preset] of Object.entries(PRESET)) {
         `arrow polygons ${JSON.stringify({ ...ap, x: 0, y: 0 })}`);
   console.log(`arrow: ids nulls ok, polygons ${ap.format}, ${ap.x.length} coords, ${ap.metadata['ARROW:extension:name']}`);
 
+  // Z7 topology: reference vectors (wrenoud/Z7 tests), pentagon gap, children <-> parent
+  const z = (s) => dg.z7FromString(s);
+  const nbs = dg.z7Neighbors([z('0800432'), z('0800')]);
+  check(nbs[0].map((x) => dg.z7ToString(x)).join() === '0800433,0800651,0800064,0800436,0800430,0800655' &&
+        nbs[1][4] === null && nbs[1].filter((x) => x !== null).length === 5, `neighbours ${nbs}`);
+  const kids = dg.z7Children([tartu, z('0300')]);
+  check(kids[0].length === 7 && kids[1].length === 6 && dg.z7Parent(kids.flat()).every((p, i) => p === (i < 7 ? tartu : z('0300'))) &&
+        dg.z7Parent([tartu], 3)[0] === z(s.slice(0, 5)), 'children / parent');
+  for (const [what, fn] of [['parent of a base cell', () => dg.z7Parent([z('05')])],
+                            ['children at res 20', () => dg.z7Children(dg.geoToZ7(20, [1], [1]))],
+                            ['neighbours of an invalid id', () => dg.z7Neighbors([Z7_NONE])]]) {
+    try { fn(); check(false, `${what}: no error`); } catch (e) { console.log(`${what} -> ${e.message}`); }
+  }
+
   if (work) {
     const dir = join(work, name);
+    // GBT neighbours vs the CLI's neighbor output (check_cli.py's last topology run, whole earth)
+    const nbrLines = (await readFile(join(dir, 'nbr.nbr'), 'utf8')).split('\n').filter((l) => l.trim());
+    const nbrCells = nbrLines.map((l) => BigInt('0x' + l.split(' ')[0]));
+    const gbt = dg.z7NeighborsRaw(nbrCells);
+    let nbad = 0;
+    nbrLines.forEach((l, i) => {
+      const cli = new Set(l.trim().split(' ').slice(1).map((x) => BigInt('0x' + x)));
+      const mine = [...gbt.subarray(6 * i, 6 * i + 6)].filter((x) => x !== Z7_NONE);
+      nbad += mine.length !== cli.size || !mine.every((x) => cli.has(x));
+    });
+    check(nbad === 0, `${nbad} neighbour sets differ from CLI`);
+    console.log(`neighbours: ${nbrCells.length} cells (whole earth), GBT = CLI neighbor output, ${nbad} differ`);
+
     const lines = async (f) => (await readFile(join(dir, f), 'utf8')).split('\n').filter((l) => l.trim());
     const pts = (await lines('pts.txt')).map((l) => l.split(' ').map(Number));
     const cliIds = (await lines('z7.txt')).map((l) => BigInt('0x' + l.trim()));
@@ -121,6 +148,7 @@ for (const [what, fn] of [
   ['geoToZ7', () => dg.geoToZ7(9, lon, lat)],
   ['z7ToCentroid', () => dg.z7ToCentroid(dg.geoToZ7(9, lon, lat))],
   ['z7ToBoundaryRaw', () => dg.z7ToBoundaryRaw(dg.geoToZ7(9, lon, lat))],
+  ['z7NeighborsRaw', () => dg.z7NeighborsRaw(dg.geoToZ7(9, lon, lat))],
 ]) {
   const t0 = performance.now();
   fn();
