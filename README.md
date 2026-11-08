@@ -24,11 +24,11 @@ The builds follow several upstream lines, which are listed in `upstream.json` (o
 
 | line | upstream | release |
 |---|---|---|
-| `master` | branch `master` (9.1) | `edge`, rolling pre-release |
+| `master` | branch `master` (9.2) | `edge`, rolling pre-release |
+| `v9.2` | tag `v9.2` | `v9.2`, fixed release |
 | `v9.1` | tag `v9.1` | `v9.1`, fixed release |
-| `v8.44` | tag `v8.44` | `v8.44`, fixed release |
 
-Rolling pre-releases are replaced on every push to `main`. A fixed release is published once, when the tag with the release name is pushed to this repo, and a rebuild of the same upstream version gets a suffix (e.g. `v8.44-r2`).
+Rolling pre-releases are replaced on every push to `main`. A fixed release is published once, when the tag with the release name is pushed to this repo, and a rebuild of the same upstream version gets a suffix (e.g. `v9.2-r2`). The `v8.44` release is kept as an archive, the 8.x line is no longer built.
 
 Linux arm64 is much slower than the other platforms, because `long double` is a software 128-bit type on that platform (see `build_notes.md`).
 
@@ -42,7 +42,7 @@ zig build release                    # all platforms in zig-out/release/<platfor
 ci/run_examples.sh zig-out/bin/dggrid /tmp/dggrid-examples
 ```
 
-To build another upstream line, `ci/use_line.sh --reset v8.44` checks out the pinned commit of that line in the submodule and applies the patches of that line (requires `jq`). The submodule then differs from the commit recorded in this repo, which should not be committed; `ci/use_line.sh --reset master` switches back.
+To build another upstream line, `ci/use_line.sh --reset v9.1` checks out the pinned commit of that line in the submodule and applies the patches of that line (requires `jq`). The submodule then differs from the commit recorded in this repo, which should not be committed; `ci/use_line.sh --reset master` switches back.
 
 Requires Zig 0.16.0. `build_notes.md` has the findings behind the build choices (targets, flags, testing, performance). `prototype/` holds experiments, e.g. linking DGGRID as a library with geoarrow-c.
 
