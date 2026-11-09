@@ -15,7 +15,7 @@ zig build smoke -Ddgreal=double                 # IGEO7v2 cell -> GeoArrow WKB a
 zig build -Dtarget=wasm32-wasi -Ddgreal=double -Doptimize=ReleaseFast -p zig-out/wasm   # dggrid.wasm, see ../wasm/
 ```
 
-## C API (DGGRID 9.1 presets)
+## C API (DGGRID 9.2, presets unchanged since 9.1)
 
 `include/dggrid.h`, layers:
 
@@ -47,6 +47,18 @@ limits:
 - res 20 at an exact pole: input lies on the edge between 2 cells (08.. / 11..), libm rounding picks one. with double those cells collapse numerically (seen: 5 of 6 vertices exactly `-90`, the 6th ca 10 cm off), upstream arm64 CLI same
 - within 1 deg of a pole: double vs 80-bit long double differ up to 2.4e-7 deg at res 20 (ca 3 cm, res 9 ca 3e-9), elsewhere 5e-12
 - exact pole input: ties also across platforms, mac arm64 vs karula CLI pick different cells at 0-2 of 2 pole points. `check_cli.py` allows it only if both cells reach the pole
+
+### checks 2026-11-09 on 9.2 @ 81de09a (M2 Pro native only, karula pending, no VPN)
+
+- `setup_src.sh`: `0001`, `0002`, `0101` apply unchanged. `dgreal.py` covers the new `DgEllipsoidRF.cpp` (DgWGS84RF.cpp gone) + `DgDVec3D.h`, no `*l()` math left outside comments. dgcore.cpp unchanged, presets + `makeRF` same in 9.2
+- `zig build test`: double + longdouble ok
+- `check_cli.py` vs 9.2 root CLI, 4 presets, 3005 pts: Z7 ids + strings identical res 0-20, centroids + boundaries within 6.1e-13 deg, whole earth res 1 + 3 all 3 wrap modes, topology res 0-6 = CLI, OK
+- new vs 9.1: 2 exact pole ties (IGEO7v1 res 17, IVEA7HL res 5), allowed rule (both cells reach the pole). longdouble lib same, but long double == double on mac arm64 anyway -> nudge changes in 9.2 (scaled by res, upstream #111)? not chased
+- `check_arrow.py` OK (uv env: pyarrow geoarrow-pyarrow shapely geopandas pyproj numpy), rss flat 525 MB over 50 round trips
+- wasm32-wasi `test.mjs` OK: res 20 0 ids differ (1 pole tie), neighbours whole earth res 6 = CLI, boundaries 9.1e-13 deg. `dggrid.wasm` 974 KB
+- cross build double: x86_64 + aarch64-linux-musl, x86_64-windows-gnu ok, not run
+- CLI from the copy, 39 examples, 200 output files: longdouble 0 + double 0 differ vs root CLI (mac arm64). bench hash `b90723bb9bf21ffb` unchanged
+- karula (linux x86_64 reference): todo -> `~/dev/build/DGGRID_portable_tests/bin/proto-v9.2/`
 
 ### checks 2026-11-02 (reference platforms: M2 Pro native, karula x86_64 native; DGGRID 9.1 @ 4f8bf61)
 
