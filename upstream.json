@@ -1,5 +1,5 @@
 [
   { "line": "master", "ref": "master", "sha": null, "patches": "patches", "release": "edge", "rolling": true, "prerelease": true },
-  { "line": "v9.1", "ref": "v9.1", "sha": "4f8bf6150ae0e77fd669c8ed8a5e1cffa9664b36", "patches": "patches/v9.1", "release": "v9.1", "rolling": false, "prerelease": false },
-  { "line": "v8.44", "ref": "v8.44", "sha": "126881d40b32abd9ac57034d792f26a2fecf5243", "patches": "patches/v8.44", "release": "v8.44", "rolling": false, "prerelease": false }
+  { "line": "v9.2", "ref": "v9.2", "sha": "81de09a997bd8f59a2e2aa072d0f6972511453e5", "patches": "patches/v9.2", "release": "v9.2", "rolling": false, "prerelease": false },
+  { "line": "v9.1", "ref": "v9.1", "sha": "4f8bf6150ae0e77fd669c8ed8a5e1cffa9664b36", "patches": "patches/v9.1", "release": "v9.1", "rolling": false, "prerelease": false }
 ]
