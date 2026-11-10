@@ -64,9 +64,8 @@ int dg_geo_to_z7(dg_ctx* ctx, int res, const double* lon, const double* lat, siz
 /* cell centre points; resolution taken from each index */
 int dg_z7_to_centroid(dg_ctx* ctx, const uint64_t* z7, size_t n, double* lon, double* lat);
 /* cell boundaries: lonlat gets n * 6 (lon, lat) pairs, nverts 6, or 5 for the 12
- * pentagons per resolution (unused pairs NaN). DGGRID 9.2, ISEA presets, double: the
- * cells at a pole have fewer from res 17 on, down to 1 (all vertices snapped onto the
- * pole, then dropped as duplicates). pentagon test = the Z7 id, not nverts */
+ * pentagons per resolution (unused pairs NaN). ISEA pole cells keep 6 in double thanks to
+ * patches/0003 (plain DGGRID 9.2 collapses them from res 17 on, see README limits) */
 int dg_z7_to_boundary(dg_ctx* ctx, const uint64_t* z7, size_t n, double* lonlat,
                       uint8_t* nverts);
 

@@ -284,8 +284,8 @@ export fn dg_z7_to_centroid(ctx: *Ctx, z7: [*]const u64, n: usize, lon: [*]f64, 
 }
 
 /// cell boundaries in degrees: lonlat holds n * 6 (lon, lat) pairs, nverts 6 or 5
-/// (pentagons, unused pairs NaN). 9.2 ISEA in double: pole cells from res 17 on fewer,
-/// down to 1 (upstream pole snap + duplicate drop, see README limits)
+/// (pentagons, unused pairs NaN). ISEA pole cells: 6 in double only with patches/0003
+/// (plain 9.2 snaps them onto the pole from res 17 on, see README limits)
 export fn dg_z7_to_boundary(ctx: *Ctx, z7: [*]const u64, n: usize, lonlat: [*]f64, nverts: [*]u8) c_int {
     return forEachResRun(ctx, z7, n, struct {
         fn call(core: *Core, res: u5, ids: [*]const u64, m: usize, off: usize, a: anytype) c_int {
@@ -462,6 +462,31 @@ test "poles and antimeridian don't trip the WGS84 latitude conversion" {
             var ll: [4 * 12]f64 = undefined;
             var nv: [4]u8 = undefined;
             try testing.expectEqual(DG_OK, dg_z7_to_boundary(ctx, &z7, 4, &ll, &nv));
+        }
+    }
+}
+
+test "pole cells keep 6 distinct vertices at res 15-20 (patches/0003, plain 9.2 in double: 1-5)" {
+    for (presets, 0..) |_, p| {
+        const ctx = dg_preset_new(@intCast(p)) orelse return error.CtxNew;
+        defer dg_ctx_free(ctx);
+        // close to the pole, not on it (exactly on it = edge between 2 cells)
+        const lon = [_]f64{ 0.0, 90.0, -90.0, 180.0, 0.0, 90.0, -90.0, 180.0 };
+        const lat = [_]f64{ 89.9999999, 89.9999999, 89.9999999, 89.9999999, -89.9999999, -89.9999999, -89.9999999, -89.9999999 };
+        var z7: [8]u64 = undefined;
+        var ll: [8 * 12]f64 = undefined;
+        var nv: [8]u8 = undefined;
+        var res: c_int = 15;
+        while (res <= max_res) : (res += 1) {
+            try testing.expectEqual(DG_OK, dg_geo_to_z7(ctx, res, &lon, &lat, 8, &z7));
+            try testing.expectEqual(DG_OK, dg_z7_to_boundary(ctx, &z7, 8, &ll, &nv));
+            for (0..8) |i| {
+                try testing.expectEqual(@as(u8, 6), nv[i]);
+                const v = ll[i * 12 ..][0..12];
+                for (0..6) |a| for (a + 1..6) |b| {
+                    try testing.expect(v[2 * a] != v[2 * b] or v[2 * a + 1] != v[2 * b + 1]);
+                };
+            }
         }
     }
 }

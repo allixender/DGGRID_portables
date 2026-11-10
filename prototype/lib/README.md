@@ -46,11 +46,11 @@ gotcha: `DgRF::forceAddress()` swaps the address but keeps the location's frame 
 limits:
 - Z7 ids in a pentagon's deleted sub-sequence (`002`, `0605`) don't exist, DGGRID itself silently decodes them to another cell (`002` = `006`, upstream TODO in DgZ7System). rejected here, valid id count per res = 10 * 7^r + 2 is a test
 - res 20 at an exact pole: input lies on the edge between 2 cells (08.. / 11..), libm rounding picks one. with double those cells collapse numerically (seen: 5 of 6 vertices exactly `-90`, the 6th ca 10 cm off), upstream arm64 CLI same
-- within 1 deg of a pole: double vs 80-bit long double differ up to 2.4e-7 deg at res 20 (ca 3 cm, res 9 ca 3e-9), elsewhere 5e-12
+- within 1 deg of a pole: double vs 80-bit long double differ up to 2.4e-7 deg at res 20 (ca 3 cm, res 9 ca 3e-9), elsewhere 5e-12. 9.2 + `patches/0003`: ISEA 1.9e-9 deg at res 20 (ca 0.2 mm), IVEA 4.5e-12
 - exact pole input: ties also across platforms, mac arm64 vs karula CLI pick different cells at 0-2 of 2 pole points. `check_cli.py` allows it only if both cells reach the pole
-- 9.2 regression, ISEA presets in double (the lib, and the CLI wherever long double = double: mac arm64, windows arm64): pole cells res 17 -> 5 vertices, res 18-20 -> 1 vertex = the pole itself (9.1: 6). `DgProjISEA.cpp` snyderInv snaps to the pole when `1 - |sinlat| <= 4 * LDBL_EPSILON` = within ca 2.4e-6 deg (27 cm) in double, x87 5e-8 deg -> whole cells snap, 9.2's `dropDuplicatePoints` (DgIDGGBase, 1e-12 rad) then leaves one point. Arrow polygons out of such a cell are degenerate. IVEA not affected, x87 / quad hide it. fix = lat + lon by atan2 from all three components (direct problem), no snap: 6 vertices again, 0.01 mm vs x87 (9.1 double: 5.8 cm), 39 examples unchanged except hiRes shp (2.8e-14 deg) -> for Kevin, not applied here
+- 9.2 regression (fixed here by `patches/0003`), ISEA presets in double (the lib, and the CLI wherever long double = double: mac arm64, windows arm64): pole cells res 17 -> 5 vertices, res 18-20 -> 1 vertex = the pole itself (9.1: 6). `DgProjISEA.cpp` snyderInv snaps to the pole when `1 - |sinlat| <= 4 * LDBL_EPSILON` = within ca 2.4e-6 deg (27 cm) in double, x87 5e-8 deg -> whole cells snap, 9.2's `dropDuplicatePoints` (DgIDGGBase, 1e-12 rad) then leaves one point. Arrow polygons out of such a cell are degenerate. IVEA not affected, x87 / quad hide it. fix = lat + lon by atan2 from all three components (direct problem), no snap: 6 vertices again, 0.01 mm vs x87 (9.1 double: 5.8 cm), 39 examples unchanged except hiRes shp (2.8e-14 deg) -> `patches/0003-isea-inverse-atan2-pole.patch` on master (PR #26), `setup_src.sh` takes it with the other `patches/*`, lib fixed since 2026-11-10. fixed `v9.2` release CLI still without it. Kevin by email
 
-### checks 2026-11-09 on 9.2 @ 81de09a (M2 Pro native only, karula pending, no VPN)
+### checks 2026-11-09/10 on 9.2 @ 81de09a (M2 Pro native, karula x86_64 native)
 
 - `setup_src.sh`: `0001`, `0002`, `0101` apply unchanged. `dgreal.py` covers the new `DgEllipsoidRF.cpp` (DgWGS84RF.cpp gone) + `DgDVec3D.h`, no `*l()` math left outside comments. dgcore.cpp unchanged, presets + `makeRF` same in 9.2
 - `zig build test`: double + longdouble ok
@@ -60,9 +60,11 @@ limits:
 - wasm32-wasi `test.mjs` OK: res 20 0 ids differ (1 pole tie), neighbours whole earth res 6 = CLI, boundaries 9.1e-13 deg. `dggrid.wasm` 974 KB
 - cross build double: x86_64 + aarch64-linux-musl, x86_64-windows-gnu ok, not run
 - CLI from the copy, 39 examples, 200 output files: longdouble 0 + double 0 differ vs root CLI (mac arm64). bench hash `b90723bb9bf21ffb` unchanged
-- karula 2026-11-10 (`bin/proto-v9.2/`, verify.sh + slim verify3.sh): longdouble lib vs gcc 16 + zig gnu CLI (x87) 0 fails, topology res 0-6 equal. double lib vs x87 CLI 7 fails in both, all ISEA pole cells (vertex count + 2.2e-6 deg at res 17) = the 9.2 pole snap, see limits. IVEA clean
+- karula 2026-11-10 (`bin/proto-v9.2/`, verify.sh + slim verify3.sh): longdouble lib vs gcc 16 + zig gnu CLI (x87) 0 fails, topology res 0-6 equal. double lib vs x87 CLI 7 fails in both (before `0003`), all ISEA pole cells (vertex count + 2.2e-6 deg at res 17) = the 9.2 pole snap, see limits. IVEA clean
 - karula examples 39/39, 196 files: longdouble copy = upstream byte for byte, double vs x87 58 differ (9.1: 60), gcc vs zig gnu 21 (multipleOrientations). test + test musl 12/12 both types, bench hash same, wasm node 22 OK, check_arrow both types OK, rss flat
 - `TOPO_RES` default 6 -> 5 (CLI children output at res 6 = ca 56 of 71 s per preset)
+- with `patches/0003` (proto/lib efe3385, 2026-11-10), mac: `check_cli.py` vs root CLI with 0001-0003 OK, pole cells res 15-20 6 vertices in all 4 presets, `zig build test` both types 13/13 (new: pole cells res 15-20 = 6 distinct vertices, fails without `0003`: 5), `check_arrow.py`, wasm `test.mjs` OK
+- karula: double lib vs x87 gcc 16 + zig gnu CLI (plain upstream) 0 fails (was 7), ISEA within 1 deg of a pole 1.9e-9 deg at res 20. longdouble 0 fails. examples 39/39, longdouble copy (with 0001-0003) = upstream byte for byte -> 0003 changes nothing on x87. test + test musl 12/12 both types, bench hash same, wasm node 22 OK, check_arrow both types OK (polygons vs CLI 4.7e-12 deg), rss flat
 
 ### checks 2026-11-02 (reference platforms: M2 Pro native, karula x86_64 native; DGGRID 9.1 @ 4f8bf61)
 
