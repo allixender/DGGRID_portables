@@ -322,6 +322,22 @@ goal: build more than the pinned master commit, eg. tag v8.44 + dev branch v91b,
 - published 2026-10-31: PR #18 merged (b974d25), push run 41215657657 -> `edge` = 9.1 @ 4f8bf61. tag `v9.1` run 41218034036: ubsan + 8 tests 39/39, 7 archives + `SHA256SUMS` ok, BUILDINFO lists `patches/v9.1/0001` + `0002`. `--latest` set by hand, v8.44 off "Latest", `releases/latest` = v9.1
 - watchdog dispatch on b974d25 (run 41232253645) green, no new PR -> master pinned = upstream, v91b out of the loop
 
+### v9.2 (2026-11-09): master + fixed line, v8.44 retired
+
+- upstream tagged v9.15 (7d016a0) + v9.15.1 (af1571f) on 11-04, v9.2 (81de09a) on 11-05, all on master. 9.2 = 9.15 + nudge fixes (diagonal, scaled by res, upstream #111), quad edge points in tri/dmd grids, examples. `DgWGS84RF.cpp` deleted, `DgEllipsoidRF` takes over (ellipsoidal distance) -> globs, `build.zig` unchanged
+- no fixed lines for v9.15 / v9.15.1, stepping stones, superseded within a day
+- watchdog: #20 (086180e, 9.15) merged 11-08 -> #21 (2f6f794) + #22 (81de09a) stale, gitlink conflict, #22 base from before #20. watchdog skips a line when `watchdog/<line>-<sha10>` exists -> never refreshes a stale PR. fix = close + delete branch, `gh workflow run watchdog.yml` -> #24 fresh from main, compare 086180e..81de09a
+- bot PRs: the `pull_request` run shows `action_required` (#22, #24), the dispatched `build.yml` run is the real check
+- watchdog red 2026-11-06 (run 42221460878): "account is locked due to a billing issue", job never started, green again 11-07
+- `patches/0001` + `0002` apply unchanged on 9.15 + 9.2 (`0002` is in DgAuthalicConverter.cpp, untouched by the ellipsoid refactor). `patches/v9.2/` = copy
+- PR #23: + `v9.2` row, - `v8.44` row + `patches/v8.44`. 8.x static -> not built anymore, `v8.44` release + tag stay as archive, row + patches in git history if ever a `-rN`. plan dry run: tag `v8.44-r2` -> error now
+- local mac arm64 v9.2: 39/39. dispatch run 42501203700: ubsan + 8 tests green
+- value compare vs linux-x86_64, byte cmp of 139 output files, v9.1 tag run vs v9.2: win-x86_64 62/62, mac-x86_64 23/24, mac-arm64 74/74, win-arm64 74/74 -> same picture. per platform the values are identical 9.1 vs 9.2. multipleOrientations `vert0_lon`: linux -113.37, mac-arm64 -177.15, win-x86_64 -143.24, sampleOutput 152.50 (libc `rand()`, see v9.1). win-x86_64 count incl the `<ex>.txt` stdout logs (CRLF). mac-x86_64: gridgenDiamond = linux now (quad edge fix?), superfundGrid .shp 1 -> 3 (1 ulp bbox family)
+- sampleOutput multipleOrientations meta echo 80 vs our 76 lines = 3x `*_output_gdal_format` + `clip_using_holes`, reference built with GDAL
+- published 2026-11-09: #24 merged (c0079be) -> `edge` = 9.2 @ 81de09a, #23 merged (7e89096), tag `v9.2` run 42642726227: ubsan + 8 tests, 7 archives + `SHA256SUMS`. "Latest" stays on v9.1 on purpose, until v9.2 is checked via dggrid4py
+- local: `git fetch --tags` rejects the stale local `edge` tag (rolling, recreated on every push to main) -> `git fetch --tags --force`
+- found 2026-11-10 (prototype lib checks on karula): 9.2 regression on long double = double platforms (mac arm64, windows arm64 releases): ISEA pole cells res 17 -> 5 vertices, res 18-20 -> 1 vertex = the pole (9.1: 6), IGEO7v2 / IGEO7v1. `DgProjISEA.cpp` snyderInv snaps to the pole when `1 - |sinlat| <= 4 * LDBL_EPSILON` (ca 2.4e-6 deg in double, x87 5e-8) + new `dropDuplicatePoints` (DgIDGGBase) -> one point left. x86_64 + aarch64-linux (quad) fine, IVEA fine. atan2 form of the inverse (no snap) tested: 6 vertices, 0.01 mm vs x87, 39 examples unchanged except hiRes shp (2.8e-14 deg). details prototype/lib/README.md on proto/lib -> `patches/0003-isea-inverse-atan2-pole.patch` on master (PR #26), v9.2 line unchanged for now. Kevin: Alex by email, no upstream PR from here
+
 ## 2026-11-02 prototype on 9.1 (branch `proto/lib-v9.1`, local only)
 
 proto/lib-dgreal + origin/notes/v9.1-release merged, submodule on 4f8bf61
@@ -396,8 +412,10 @@ next, roughly by priority:
 - windows-arm64 (parked): UCRT printf rounding, not libm -> `__USE_MINGW_ANSI_STDIO=1` + `src/mingw_ldouble_numput.cpp` also for aarch64-windows (check mingw pformat with long double == double), target byte-identical vs mac-arm64, then recheck z3CellClip/zCellClip cell counts. verify with precision probe + example outputs, needs a windows-11-arm runner only (CI), no windows host
 - upstream (Kevin): `patches/0001-output-streams-binary-mode.patch`; MSVC template fixes (`::DgDiscTopoRF` in DgDiscTopoRFS.h:313, DgRF.hpp:308) as `patches/0002`, `0003`; long double precision typedef (perf everywhere + aarch64-linux)
 - zig: report libc++ `ostream << long double` on mingw ucrt (ANSI_STDIO not reaching zig-built libc++) -> drop `src/mingw_ldouble_numput.cpp` once fixed
-- upstream lines (state 2026-10-31): master -> `edge` (9.1 @ 4f8bf61), fixed `v9.1` (Latest) + `v8.44`, no dev line right now. Kevin: authalic inverse on quad long double (`patches/0002`), windows `output_last_seqnum` 32 bit limit, #107 windows test of the SEQNUM fix still open
-- CLAUDE.md lives on proto/lib-v9.1 + proto/lib-dgreal only, updated on proto/lib-v9.1
+- upstream lines (state 2026-11-09): master -> `edge` (9.2 @ 81de09a), fixed `v9.2` + `v9.1` (Latest), `v8.44` archive only, no dev line right now. Kevin: authalic inverse on quad long double (`patches/0002`), windows `output_last_seqnum` 32 bit limit, #107 windows test of the SEQNUM fix still open
+- ISEA pole snap (9.2): `patches/0003` on master. once Kevin answered: drop 0003 if upstream fixes it, or `patches/v9.2/0003` + tag `v9.2-r1` for the fixed release
+- "Latest" -> v9.2 by hand (`gh release edit v9.2 --latest`) once dggrid4py ran against the v9.2 binaries
+- CLAUDE.md lives on proto/lib only, on 9.2 + v8.44 archive since 2026-11-09
 - macos gatekeeper / notarisation (cf. CODESIGNING.md in fork)
 - aarch64-linux perf on a real arm runner (VM measured 35-45x vs mac)
-- geoarrow: C API + Arrow / GeoArrow in + out on 9.1 done (proto/lib-v9.1), next list in prototype/lib/README.md
+- geoarrow: C API + Arrow / GeoArrow + Z7 topology on 9.1 done (proto/lib-v9.1), library builds as separate track, on 9.2 since 2026-11-09 (proto/lib, one rolling branch, per-version + dgreal branches folded in), next list in prototype/lib/README.md
