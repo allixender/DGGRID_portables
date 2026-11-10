@@ -1,0 +1,100 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: allixender <alexander.kmoch@ut.ee>
+Date: Tue, 10 Nov 2026 09:36:43 +0200
+Subject: [PATCH 3/3] DgProjISEA: inverse latitude by atan2, no pole snap
+
+snyderInv() computes sinlat and takes asin(sinlat), which is
+ill-conditioned at +-1: near a pole it loses half the digits (ca 1e-8 rad
+with a 53-bit long double). 9.2 added a snap to the pole when
+1 - |sinlat| <= 4 * LDBL_EPSILON. Where long double is double (macOS
+arm64, Windows arm64) that snap radius is ca 2.4e-6 deg (27 cm), larger
+than the cells at the pole from ISEA res 17 on. All their vertices snap
+onto the pole, the new dropDuplicatePoints() in DgIDGGBase then removes
+the duplicates, and GENERATE_GRID writes the pole cells of IGEO7v2 /
+IGEO7v1 with 5 vertices at res 17 and a single point at res 18-20
+(9.1: 6). x87 (snap radius 5e-8 deg) and quad builds don't show it.
+
+The direct problem from the face centre has all three components of the
+point: sin(lat), cos(lat) sin(dlon) = sin(azh) sin(z) and
+cos(lat) cos(dlon) = cos(lat0) cos(z) - sin(lat0) sin(z) cos(azh).
+lat = atan2(sin(lat), hypot(..)) and lon = lon0 + atan2(..) are well
+conditioned everywhere, no snap needed. The coslon expression it
+replaces is the same quantity, simplified.
+
+With double long double: pole cells res 15-20 have 6 vertices again in
+all four IGEO7 / IVEA7 presets, the res 18 north pole cell is within
+1e-5 m of the x87 build (9.1 double: up to 6 cm). examplesNoGDALorH3:
+all outputs unchanged except hiRes/littleTri27.shp (res 27, coordinates
+differ by up to 2.8e-14 deg).
+---
+ src/lib/dglib/lib/DgProjISEA.cpp | 37 +++++++++++---------------------
+ 1 file changed, 13 insertions(+), 24 deletions(-)
+
+diff --git a/src/lib/dglib/lib/DgProjISEA.cpp b/src/lib/dglib/lib/DgProjISEA.cpp
+index 19bd4441..a598c98e 100644
+--- a/src/lib/dglib/lib/DgProjISEA.cpp
++++ b/src/lib/dglib/lib/DgProjISEA.cpp
+@@ -22,7 +22,6 @@
+ //
+ ////////////////////////////////////////////////////////////////////////////////
+ 
+-#include <cfloat>
+ #include <cmath>
+ #include <climits>
+ 
+@@ -241,7 +240,7 @@ GeoCoord snyderInv (const IcosaGridPt& icosaPt, SphIcosa& sphicosa)
+ */
+ {
+   long double ddazh,ph,fh,azh,azh1,dazh,h,fazh,flazh,dz,z;
+-  long double sinlat,sinlon;
++  long double sinlat;
+   long double azh0;
+   GeoCoord Geovect;
+   const PreCompGeo& cent = sphicosa.triCen[icosaPt.triangle];
+@@ -306,31 +305,21 @@ GeoCoord snyderInv (const IcosaGridPt& icosaPt, SphIcosa& sphicosa)
+     while (azh > M_PI_L) azh -= M_2PI;
+ 
+     sinlat=cent.sinLat * cosl(z) + cent.cosLat * sinl(z) * cosl(azh);
+-    if (sinlat > M_ONE) sinlat = M_ONE;
+-    if (sinlat < -M_ONE) sinlat = -M_ONE;
+-    Geovect.lat = asinl(sinlat);
+-
+-    // asin is ill-conditioned at +-1: sinlat within a few units in the last
+-    // place of +-1 (here 0.5 ulp gives 3e-10 radians) puts the point closer
+-    // to the pole than this formula resolves, and the longitude computed
+-    // below would be a ratio of rounding errors. Snap it to the pole.
+-    if (fabsl(fabsl(Geovect.lat) - M_PI_2_L) < M_EPSILON ||
+-        M_ONE - fabsl(sinlat) <= 4.0L * LDBL_EPSILON)
+-    {
+-       Geovect.lat = (Geovect.lat > M_ZERO) ? M_PI_2_L : -M_PI_2_L;
++    // The point from the face centre (direct problem) with all three of its
++    // components: sin(lat) above, cos(lat) sin(dlon) and cos(lat) cos(dlon).
++    // atan2 is well conditioned everywhere; asin(sinlat) is not near the
++    // poles, where it loses half the digits (ca 1e-8 rad in double) and
++    // needed a snap that moved whole pole cells onto the pole there.
++    const long double clsl = sinl(azh) * sinl(z);
++    const long double clcl = cent.cosLat * cosl(z) -
++                             cent.sinLat * sinl(z) * cosl(azh);
++    const long double cl = hypotl(clsl, clcl);
++    Geovect.lat = atan2l(sinlat, cl);
++    if (cl == M_ZERO)
+        Geovect.lon = M_ZERO;
+-    }
+     else
+     {
+-      sinlon = sinl(azh)*sinl(z)/cosl(Geovect.lat);
+-      long double coslon = (cosl(z) - cent.sinLat * sinl(Geovect.lat)) /
+-              cent.cosLat/cosl(Geovect.lat);
+-      if (sinlon > M_ONE) sinlon = M_ONE;
+-      if (sinlon < -M_ONE) sinlon = -M_ONE;
+-      if (coslon > M_ONE) coslon = M_ONE;
+-      if (coslon < -M_ONE) coslon =-M_ONE;
+-      Geovect.lon = cent.pt.lon+asinl(sinlon);
+-      Geovect.lon = cent.pt.lon+atan2l(sinlon, coslon);
++      Geovect.lon = cent.pt.lon + atan2l(clsl, clcl);
+       if (Geovect.lon <= -M_PI_L) Geovect.lon += M_2PI;
+       if (Geovect.lon >= M_PI_L) Geovect.lon -= M_2PI;
+     }
+-- 
+2.52.0
+
