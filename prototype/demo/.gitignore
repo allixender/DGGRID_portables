@@ -1,4 +1,6 @@
 # copied by copy_libs.sh
 python/igeo7/_lib/
+julia/_lib/
+julia/tartu_rings.geojson
 web/dggrid.wasm
 web/dggrid.mjs

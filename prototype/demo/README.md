@@ -1,11 +1,13 @@
-# prototype/demo: using the library from Python and the browser
+# prototype/demo: using the library from Python, Julia and the browser
 
 Stub bindings + usage demos for the prototype library in `../lib/`. Nothing here is built. `copy_libs.sh` copies the artifacts in, and the copies are gitignored.
 
 ```
-copy_libs.sh                 ../lib/zig-out -> python/igeo7/_lib/, web/
+copy_libs.sh                 ../lib/zig-out -> python/igeo7/_lib/, julia/_lib/, web/
 python/igeo7/__init__.py     ctypes binding: numpy API + Arrow API (pyarrow)
 python/demo.py
+julia/IGEO7.jl               ccall binding: plain API, topology, WKB / WKT via the Arrow C API
+julia/demo.jl                + Project.toml / Manifest.toml (julia 1.12.7), see julia/README.md
 web/index.html, main.js      browser demo: world grid, click -> cell
 web/cells.mjs                all cells at a resolution (Z7 digit rule), pole cell test
 web/dggrid.d.mts             TypeScript types for dggrid.mjs
@@ -15,7 +17,7 @@ web/dggrid.d.mts             TypeScript types for dggrid.mjs
 
 | use | files | from |
 |---|---|---|
-| Python / any FFI | `libdggrid.dylib` / `libdggrid.so` / `dggrid.dll` | `../lib/zig-out/lib/` (dll: `bin/`) |
+| Python / Julia / any FFI | `libdggrid.dylib` / `libdggrid.so` / `dggrid.dll` | `../lib/zig-out/lib/` (dll: `bin/`) |
 | C callers | + `dggrid.h`, `dggrid_arrow.h` | `../lib/zig-out/include/` |
 | browser / node | `dggrid.wasm` + `dggrid.mjs` | `../lib/zig-out/wasm/bin/`, `../wasm/` |
 
@@ -29,6 +31,7 @@ cd ../lib && zig build -Ddgreal=double -Doptimize=ReleaseFast \
 cd ../demo && ./copy_libs.sh
 
 cd python && python demo.py          # numpy; pyarrow + geoarrow-pyarrow + shapely for the Arrow part
+cd julia && julia --project=. -e 'using Pkg; Pkg.instantiate()' && julia --project=. demo.jl
 python3 -m http.server -d web 8000   # -> http://localhost:8000 (wasm can't load from file://)
 ```
 
@@ -52,6 +55,16 @@ with Grid("IGEO7v2") as g:                 # IGEO7v1, IVEA7HL, IVEA7HS, Grid.cus
     g.z7_children(ids); g.z7_parent(ids, res=-1)   # (n, 7) with NONE / ancestors
     g.z7_neighbors_arrow(ids)                      # fixed_size_list<uint64>[6], gap = null
     g.z7_children_arrow(ids); g.z7_to_string_arrow(ids); g.z7_from_string_arrow(strs)
+```
+
+```julia
+include("IGEO7.jl"); using .IGEO7
+Grid(:IGEO7v2) do g
+    ids = lonlat_to_z7(g, 9, lon, lat)       # Vector{UInt64}
+    z7_to_centroid(g, ids); z7_to_boundary(g, ids); z7_string(ids[1])
+    z7_neighbors(g, ids); z7_children(g, ids)   # 6 × n / 7 × n, Z7_NONE = pentagon gap
+    z7_to_polygons_wkb(g, ids)                # -> LibGEOS.readgeom
+end
 ```
 
 ```js

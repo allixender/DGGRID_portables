@@ -1,0 +1,11 @@
+[deps]
+JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+LibGEOS = "a90b1aa1-3769-5649-ba7e-abc5a9d163eb"
+Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+
+[compat]
+JSON3 = "1.14"
+LibGEOS = "0.9"
+julia = "1.12"
