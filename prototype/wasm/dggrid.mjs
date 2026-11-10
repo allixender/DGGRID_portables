@@ -16,7 +16,7 @@
 //   dg.z7ToPolygonsArrow(ids);              // geoarrow.polygon: { rings, polygons, x, y, metadata, .. }
 //   dg.z7Neighbors(ids); dg.z7Children(ids); dg.z7Parent(ids, res = -1)   // index arithmetic
 
-/** DGGRID 9.1 dggs_type presets (include/dggrid.h) */
+/** DGGRID 9.2 dggs_type presets (include/dggrid.h) */
 export const PRESET = Object.freeze({ IGEO7v2: 0, IGEO7v1: 1, IVEA7HL: 2, IVEA7HS: 3 });
 
 export const WRAP = Object.freeze({ NONE: 0, EAST: 1, WEST: 2 });

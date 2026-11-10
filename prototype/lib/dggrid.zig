@@ -1,6 +1,6 @@
 //! dggrid.zig: public C ABI of the prototype IGEO7 library (see include/dggrid.h).
 //!
-//! DGGRID 9.1 aperture 7 hexagon presets (IGEO7v2 = ISEA7HLZ, IVEA7HL, ..) + Z7 index, via
+//! DGGRID 9.2 aperture 7 hexagon presets (IGEO7v2 = ISEA7HLZ, IVEA7HL, ..) + Z7 index, via
 //! the C++ core in dgcore.cpp (the only code touching DGGRID). This layer owns the handle and its error
 //! message, validates all input (on wasm a DGGRID fatal error can only trap), groups
 //! batches by resolution, and does the Z7 int <-> string / resolution work itself.
@@ -352,7 +352,7 @@ test "z7 string round trip and resolution" {
     try testing.expectEqual(@as(c_int, -1), dg_z7_res(z & ~@as(u64, 7))); // res 20 digit 0 after padding
 }
 
-// res 9 ids from the upstream 9.1 dggrid CLI, TRANSFORM_POINTS GEO -> HIERNDX Z7 INT64
+// res 9 ids from the upstream 9.1 dggrid CLI (same on 9.2), TRANSFORM_POINTS GEO -> HIERNDX Z7 INT64
 const tartu_lon = 26.729;
 const tartu_lat = 58.378;
 const tartu_ids = [_]struct { preset: c_int, z7: u64 }{

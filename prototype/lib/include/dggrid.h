@@ -1,4 +1,4 @@
-/* dggrid.h: prototype IGEO7 library (DGGRID 9.1 aperture 7 hexagon presets + Z7 index).
+/* dggrid.h: prototype IGEO7 library (DGGRID 9.2 aperture 7 hexagon presets + Z7 index).
  *
  * Implemented in dggrid.zig on top of dgcore.cpp (DGGRID). Coordinates are degrees,
  * lon in [-180, 180] (input also up to +-360, normalised), lat in [-90, 90]. Geodetic WGS84 latitudes for the WGS84 presets
@@ -29,7 +29,7 @@ extern "C" {
 
 typedef struct dg_ctx dg_ctx;
 
-/* DGGRID 9.1 dggs_type presets. All on the WGS84 authalic sphere, vert0 latitude is the
+/* DGGRID 9.2 dggs_type presets (same since 9.1). All on the WGS84 authalic sphere, vert0 latitude is the
  * exact icosahedron vertex 58.28252558853899.., azimuth 0 */
 #define DG_IGEO7V2  0   /* ISEA, WGS84 in/out,  vert0 lon 11.20 (= ISEA7HLZ, upstream IGEO7) */
 #define DG_IGEO7V1  1   /* ISEA, authalic in/out, vert0 lon 11.25 (= ISEA7HSZ, the 8.x IGEO7) */

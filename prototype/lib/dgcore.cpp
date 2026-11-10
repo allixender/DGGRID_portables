@@ -1,5 +1,5 @@
 // dgcore.cpp: the only file that touches DGGRID classes. Aperture 7 hexagons (ISEA or
-// IVEA) + the Z7 hierarchical index system, built the way DGGRID 9.1's SubOpDGG does:
+// IVEA) + the Z7 hierarchical index system, built the way DGGRID 9.2's SubOpDGG does:
 //   IDGGS on the WGS84 authalic sphere, DgIDGGSBase::makeRF(.., Z7)
 //   wgs84: coordinates at the API are geodetic. longitude is unaffected, latitude goes
 //          through DgAuthalic per value (= Dg2WayAuthalicConverter, without the network
@@ -85,7 +85,7 @@ static void fromGrid(const dgc_ctx* ctx, const DgGeoCoord& c, double* lonDeg, do
 
 extern "C" {
 
-// proj: "ISEA" | "IVEA". vert0Lat NaN: the exact icosahedron vertex latitude of the 9.1
+// proj: "ISEA" | "IVEA". vert0Lat NaN: the exact icosahedron vertex latitude of the 9.x
 // presets. vert0 is on the authalic sphere, also for wgs84 (preset orientation_datum).
 // all RFs are owned and deleted by the network
 dgc_ctx* dgc_new(const char* proj, int wgs84, double vert0Lon, double vert0Lat,

@@ -3,7 +3,7 @@
 
 Cross-check of the C API, called via ctypes (= how a Python binding would use it),
 against the dggrid CLI, per dggs_type preset (default all: IGEO7v2 IGEO7v1 IVEA7HL
-IVEA7HS). The CLI can be any 9.1 build, best the unmodified root one (../../zig-out/bin/dggrid):
+IVEA7HS). The CLI can be any build of the same DGGRID version (9.2), best the unmodified root one (../../zig-out/bin/dggrid):
 
   - random points -> Z7 int at several resolutions (TRANSFORM_POINTS GEO -> HIERNDX)
   - Z7 -> Z7 string (CLI DIGIT_STRING) and back
