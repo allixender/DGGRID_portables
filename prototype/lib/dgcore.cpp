@@ -171,7 +171,7 @@ int dgc_z7_to_centroid(dgc_ctx* ctx, int res, const uint64_t* z7, size_t n,
    DGC_CATCH(ctx)
 }
 
-// lonlat: n * 6 vertices * (lon, lat); pentagons fill 5 and leave the 6th NaN
+// lonlat: n * 6 vertices * (lon, lat); fewer than 6 (pentagons, 9.2 ISEA pole cells) -> rest NaN
 int dgc_z7_to_boundary(dgc_ctx* ctx, int res, const uint64_t* z7, size_t n,
                        double* lonlat, uint8_t* nverts)
 {

@@ -155,7 +155,10 @@ def compare_cells(label, ids, pentagons=None):
 
 
 NONE = 2**64 - 1
-TOPO_RES = int(os.environ.get("TOPO_RES", "6"))  # whole earth res 0..TOPO_RES, res 6 = 1.18M cells
+# whole earth res 0..TOPO_RES vs the CLI's neighbour + children output. 5 = 168k cells, CLI
+# ca 11 s per preset on M2 Pro; 6 = 1.18M cells, ca 80 s (children output = 3/4 of it), the
+# index arithmetic is the same per digit -> TOPO_RES=6 only for a full run
+TOPO_RES = int(os.environ.get("TOPO_RES", "5"))
 
 
 def z7_batch(fn, ids, slots):

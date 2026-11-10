@@ -284,7 +284,8 @@ export fn dg_z7_to_centroid(ctx: *Ctx, z7: [*]const u64, n: usize, lon: [*]f64, 
 }
 
 /// cell boundaries in degrees: lonlat holds n * 6 (lon, lat) pairs, nverts 6 or 5
-/// (pentagons, 6th pair NaN)
+/// (pentagons, unused pairs NaN). 9.2 ISEA in double: pole cells from res 17 on fewer,
+/// down to 1 (upstream pole snap + duplicate drop, see README limits)
 export fn dg_z7_to_boundary(ctx: *Ctx, z7: [*]const u64, n: usize, lonlat: [*]f64, nverts: [*]u8) c_int {
     return forEachResRun(ctx, z7, n, struct {
         fn call(core: *Core, res: u5, ids: [*]const u64, m: usize, off: usize, a: anytype) c_int {
