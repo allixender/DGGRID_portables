@@ -336,6 +336,7 @@ goal: build more than the pinned master commit, eg. tag v8.44 + dev branch v91b,
 - sampleOutput multipleOrientations meta echo 80 vs our 76 lines = 3x `*_output_gdal_format` + `clip_using_holes`, reference built with GDAL
 - published 2026-11-09: #24 merged (c0079be) -> `edge` = 9.2 @ 81de09a, #23 merged (7e89096), tag `v9.2` run 42642726227: ubsan + 8 tests, 7 archives + `SHA256SUMS`. "Latest" stays on v9.1 on purpose, until v9.2 is checked via dggrid4py
 - local: `git fetch --tags` rejects the stale local `edge` tag (rolling, recreated on every push to main) -> `git fetch --tags --force`
+- found 2026-11-10 (prototype lib checks on karula): 9.2 regression on long double = double platforms (mac arm64, windows arm64 releases): ISEA pole cells res 17 -> 5 vertices, res 18-20 -> 1 vertex = the pole (9.1: 6), IGEO7v2 / IGEO7v1. `DgProjISEA.cpp` snyderInv snaps to the pole when `1 - |sinlat| <= 4 * LDBL_EPSILON` (ca 2.4e-6 deg in double, x87 5e-8) + new `dropDuplicatePoints` (DgIDGGBase) -> one point left. x86_64 + aarch64-linux (quad) fine, IVEA fine. atan2 form of the inverse (no snap) tested: 6 vertices, 0.01 mm vs x87, 39 examples unchanged except hiRes shp (2.8e-14 deg). details prototype/lib/README.md on proto/lib -> Kevin, maybe `patches/0003` + `v9.2-r1`
 
 ## open / next (state 2026-10-02 end of day)
 
@@ -347,6 +348,7 @@ next, roughly by priority:
 - upstream (Kevin): `patches/0001-output-streams-binary-mode.patch`; MSVC template fixes (`::DgDiscTopoRF` in DgDiscTopoRFS.h:313, DgRF.hpp:308) as `patches/0002`, `0003`; long double precision typedef (perf everywhere + aarch64-linux)
 - zig: report libc++ `ostream << long double` on mingw ucrt (ANSI_STDIO not reaching zig-built libc++) -> drop `src/mingw_ldouble_numput.cpp` once fixed
 - upstream lines (state 2026-11-09): master -> `edge` (9.2 @ 81de09a), fixed `v9.2` + `v9.1` (Latest), `v8.44` archive only, no dev line right now. Kevin: authalic inverse on quad long double (`patches/0002`), windows `output_last_seqnum` 32 bit limit, #107 windows test of the SEQNUM fix still open
+- Kevin: ISEA pole snap regression in 9.2 (above), atan2 fix ready as diff -> upstream PR or `patches/0003`, decide
 - "Latest" -> v9.2 by hand (`gh release edit v9.2 --latest`) once dggrid4py ran against the v9.2 binaries
 - CLAUDE.md lives on the proto branches only, still lists v8.44 -> update with the prototype move to 9.2 (proto/lib-v9.2)
 - macos gatekeeper / notarisation (cf. CODESIGNING.md in fork)
